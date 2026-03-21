@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard — Srafelagi</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+    <nav class="admin-nav">
+        <div class="admin-nav-content">
+            <a href="/" class="admin-logo"><img src="/images/srafelagi.jpg" alt="" class="admin-logo-img"> Srafelagi Admin</a>
+            <div class="admin-nav-links">
+                <a href="dashboard.html" class="active"><i class="fas fa-chart-line"></i> Dashboard</a>
+                <a href="jobs.html"><i class="fas fa-briefcase"></i> Jobs</a>
+                <a href="#" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</a>
+            </div>
+        </div>
+    </nav>
+    <main class="admin-main">
+        <div class="admin-container">
+            <div class="dashboard-header">
+                <h1>Dashboard</h1>
+                <button type="button" class="btn btn-secondary" onclick="loadStats()" id="refreshBtn" aria-label="Refresh stats">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+            </div>
+            <div id="dashboardError" class="dashboard-error" style="display:none;"></div>
+            <div id="dashboardContent">
+                <section class="dashboard-section">
+                    <h2 class="dashboard-section-title">Overview</h2>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-icon"><i class="fas fa-briefcase"></i></div>
+                            <div class="stat-content">
+                                <div class="stat-value" id="statTotal">—</div>
+                                <div class="stat-label">Active Jobs</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon"><i class="fas fa-database"></i></div>
+                            <div class="stat-content">
+                                <div class="stat-value" id="statAll">—</div>
+                                <div class="stat-label">Total in DB</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon"><i class="fas fa-clock"></i></div>
+                            <div class="stat-content">
+                                <div class="stat-value" id="stat24h">—</div>
+                                <div class="stat-label">Jobs (24h)</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon"><i class="fas fa-exclamation-triangle"></i></div>
+                            <div class="stat-content">
+                                <div class="stat-value" id="statExpired">—</div>
+                                <div class="stat-label">Expired Jobs</div>
+                            </div>
+                        </div>
+                        <div class="stat-card stat-card--apply">
+                            <div class="stat-icon"><i class="fas fa-mouse-pointer"></i></div>
+                            <div class="stat-content">
+                                <div class="stat-value" id="statApplyTotal">—</div>
+                                <div class="stat-label">Total Apply Clicks</div>
+                            </div>
+                        </div>
+                        <div class="stat-card stat-card--apply">
+                            <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
+                            <div class="stat-content">
+                                <div class="stat-value" id="statApply7d">—</div>
+                                <div class="stat-label">Apply Clicks (7d)</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                <section class="dashboard-section">
+                    <h2 class="dashboard-section-title">Job views</h2>
+                    <div class="views-filter">
+                        <span>Show views for:</span>
+                        <div class="views-period-tabs">
+                            <button type="button" class="btn btn-small views-period-btn active" data-period="day">Day</button>
+                            <button type="button" class="btn btn-small views-period-btn" data-period="week">Week</button>
+                            <button type="button" class="btn btn-small views-period-btn" data-period="month">Month</button>
+                        </div>
+                    </div>
+                    <div class="views-stats">
+                        <div class="stat-card stat-card--views">
+                            <div class="stat-icon"><i class="fas fa-eye"></i></div>
+                            <div class="stat-content">
+                                <div class="stat-value" id="statViewsPeriod">—</div>
+                                <div class="stat-label" id="statViewsPeriodLabel">Views (last 24h)</div>
+                            </div>
+                        </div>
+                        <div class="stat-card stat-card--views">
+                            <div class="stat-icon"><i class="fas fa-chart-bar"></i></div>
+                            <div class="stat-content">
+                                <div class="stat-value" id="statViewsTotal">—</div>
+                                <div class="stat-label">Total views (all time)</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                <section class="dashboard-section">
+                    <h2 class="dashboard-section-title">Top jobs by apply clicks</h2>
+                    <div class="top-jobs-wrapper">
+                        <table class="admin-table top-jobs-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Title</th>
+                                    <th>Company</th>
+                                    <th>Applies</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="topJobsBody">
+                                <tr><td colspan="5" class="top-jobs-loading">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                        <p id="topJobsEmpty" class="top-jobs-empty" style="display:none;">No apply clicks yet.</p>
+                    </div>
+                </section>
+                <div class="admin-actions">
+                    <button type="button" class="btn btn-danger" onclick="deleteExpired()">
+                        <i class="fas fa-trash"></i> Delete Expired Jobs
+                    </button>
+                    <a href="jobs.html" class="btn btn-primary">
+                        <i class="fas fa-list"></i> Manage Jobs
+                    </a>
+                </div>
+            </div>
+        </div>
+    </main>
+    <script src="admin.js"></script>
+    <script>
+        const API_BASE = (window.location.port === '8080' || window.location.port === '') ? '' : 'http://localhost:8080';
+        function setLoading(loading) {
+            const btn = document.getElementById('refreshBtn');
+            const content = document.getElementById('dashboardContent');
+            const err = document.getElementById('dashboardError');
+            if (loading) {
+                if (btn) btn.disabled = true;
+                if (err) { err.style.display = 'none'; err.textContent = ''; }
+            } else {
+                if (btn) btn.disabled = false;
+            }
+        }
+        function showError(msg) {
+            const err = document.getElementById('dashboardError');
+            if (err) {
+                err.textContent = msg;
+                err.innerHTML = msg + ' <button type="button" class="btn btn-small btn-secondary" onclick="loadStats()">Retry</button>';
+                err.style.display = 'block';
+            }
+        }
+        function hideError() {
+            const err = document.getElementById('dashboardError');
+            if (err) { err.style.display = 'none'; err.textContent = ''; }
+        }
+        async function loadStats() {
+            setLoading(true);
+            hideError();
+            try {
+                const res = await fetch(API_BASE + '/api/admin/stats', {
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')}
+                });
+                if (res.status === 401) {
+                    window.location.href = API_BASE + '/admin/login.html';
+                    return;
+                }
+                if (!res.ok) throw new Error('Failed to load stats');
+                const data = await res.json();
+                document.getElementById('statTotal').textContent = data.total_jobs ?? '—';
+                document.getElementById('statAll').textContent = data.total_all ?? '—';
+                document.getElementById('stat24h').textContent = data.last_24h ?? '—';
+                document.getElementById('statExpired').textContent = data.expired_count ?? '—';
+                document.getElementById('statApplyTotal').textContent = data.total_apply_clicks ?? '—';
+                document.getElementById('statApply7d').textContent = data.apply_clicks_7d ?? '—';
+                const topJobs = data.top_jobs_by_applies || [];
+                const tbody = document.getElementById('topJobsBody');
+                const emptyEl = document.getElementById('topJobsEmpty');
+                if (topJobs.length === 0) {
+                    tbody.innerHTML = '';
+                    if (emptyEl) emptyEl.style.display = 'block';
+                } else {
+                    if (emptyEl) emptyEl.style.display = 'none';
+                    tbody.innerHTML = topJobs.map((j, i) => `
+                        <tr>
+                            <td>${i + 1}</td>
+                            <td>${escapeHtml(j.title || '—')}</td>
+                            <td>${escapeHtml(j.company || '—')}</td>
+                            <td><strong>${j.apply_count ?? 0}</strong></td>
+                            <td><a href="jobs.html" class="btn btn-small btn-primary">Edit</a></td>
+                        </tr>
+                    `).join('');
+                }
+                loadViewStats(viewsPeriod);
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+                showError('Could not load dashboard. ' + (e.message || ''));
+            } finally {
+                setLoading(false);
+            }
+        }
+        let viewsPeriod = 'day';
+        async function loadViewStats(period) {
+            period = period || 'day';
+            if (!['day','week','month'].includes(period)) period = 'day';
+            viewsPeriod = period;
+            const labels = { day: 'Views (last 24h)', week: 'Views (last 7 days)', month: 'Views (last 30 days)' };
+            document.getElementById('statViewsPeriodLabel').textContent = labels[period] || labels.day;
+            try {
+                const res = await fetch(API_BASE + '/api/admin/stats/views?period=' + period, {
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')}
+                });
+                if (res.status === 401) return;
+                const data = await res.json();
+                document.getElementById('statViewsPeriod').textContent = data.count ?? '—';
+                document.getElementById('statViewsTotal').textContent = data.total ?? '—';
+            } catch (e) {
+                document.getElementById('statViewsPeriod').textContent = '—';
+                document.getElementById('statViewsTotal').textContent = '—';
+            }
+        }
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text == null ? '' : text;
+            return div.innerHTML;
+        }
+        async function deleteExpired() {
+            if (!confirm('Delete all expired jobs? This cannot be undone.')) return;
+            try {
+                const res = await fetch(API_BASE + '/api/admin/jobs/expired', {
+                    method: 'DELETE',
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')}
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    alert('Deleted ' + (data.deleted_count || 0) + ' expired job(s)');
+                    loadStats();
+                } else {
+                    alert('Failed to delete expired jobs');
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = API_BASE + '/admin/login.html';
+        }
+        document.querySelectorAll('.views-period-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.views-period-btn').forEach(function(b) { b.classList.remove('active'); });
+                btn.classList.add('active');
+                loadViewStats(btn.getAttribute('data-period'));
+            });
+        });
+        if (!localStorage.getItem('admin_token')) {
+            window.location.href = API_BASE + '/admin/login.html';
+        } else {
+            loadStats();
+        }
+    </script>
+</body>
+</html>
