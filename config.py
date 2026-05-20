@@ -8,18 +8,40 @@ class Config:
     # ============================================
     # ⚠️ FILL IN YOUR REAL CREDENTIALS HERE! ⚠️
     # ============================================
-    
+
     # Telegram - Get from https://my.telegram.org
     API_ID: int = 39021142  # ← Your real API ID (numbers only)
     API_HASH: str = "15fd3cf63dd9604dd70de42c83640957"  # ← Your real API hash
     PHONE: str = "+251929485742"  # ← Your real phone with country code
-    
+
     # PostgreSQL
     DB_HOST: str = os.getenv("DB_HOST", "localhost")
     DB_PORT: int = int(os.getenv("DB_PORT", 5432))
     DB_NAME: str = os.getenv("DB_NAME", "ethiopian_jobs")
     DB_USER: str = os.getenv("DB_USER", "postgres")
     DB_PASSWORD: str = os.getenv("DB_PASSWORD", "yourpassword")
+
+    # ============================================================
+    # AI PROVIDERS - Multi-provider fallback chain
+    # ============================================================
+    # Priority order: Ollama (local) -> Groq (free tier) -> Gemini
+    # Set in .env: AI_PROVIDERS=ollama,groq,gemini
+
+    # Ollama (Local - Completely Free)
+    # Requires Ollama installed: https://ollama.com
+    # Default model: llama3.2 (fast, good quality)
+    OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2")
+
+    # Groq (Free Tier - 1.5M tokens/day)
+    # Get API key: https://console.groq.com
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+
+    # Gemini (Google - requires API key, has rate limits)
+    # Get API key: https://aistudio.google.com/app/apikey
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     
     @property
     def DATABASE_URL(self) -> str:
@@ -27,7 +49,6 @@ class Config:
     
     # Channels to monitor (we'll start with these)
     JOB_CHANNELS: List[str] = field(default_factory=lambda: [
-        'dailyjobethiopia',
         'ethaborede', 
         'effoyjobs',
         'jobs_in_ethiopia',

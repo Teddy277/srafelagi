@@ -48,8 +48,7 @@
         </div>
     </div>
     <script>
-        // Use API on port 8080 when page is served from another port (e.g. Live Server on 5500)
-        const API_BASE = (window.location.port === '8080' || window.location.port === '') ? '' : 'http://localhost:8080';
+        const API_BASE = resolveApiBase();
 
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -72,7 +71,7 @@
                     errorEl.style.display = 'block';
                 }
             } catch (err) {
-                errorEl.textContent = 'Cannot reach server. Is the API running on port 8080? (Run: python api.py)';
+                errorEl.textContent = 'Cannot reach server. Start the API with python api.py and open the address shown in the startup banner.';
                 errorEl.style.display = 'block';
             }
         });

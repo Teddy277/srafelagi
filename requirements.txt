@@ -17,6 +17,8 @@ uvicorn==0.27.0
 # Utilities
 python-dateutil==2.8.2
 pydantic==2.5.3
+python-dotenv==1.2.1
+requests>=2.31.0,<3
 
 # Optional: Gemini for job text normalization (set GEMINI_API_KEY in .env)
 google-genai>=1.0.0

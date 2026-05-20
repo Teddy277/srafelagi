@@ -1,47 +1,95 @@
 """
-Normalize job title, company, and description using Google Gemini so all jobs
-have a consistent, professional format.
+Normalize job title, company, and description using AI providers with fallback chain.
+
+Supports multiple providers in order of preference:
+1. Ollama (local - completely free)
+2. Groq (free tier: 1.5M tokens/day)
+3. Gemini (Google - requires API key)
 
 Setup:
-  pip install google-genai
-  Add to .env: GEMINI_API_KEY=your_key   (get one at https://aistudio.google.com/app/apikey)
-If the key is missing or the API fails, original text is returned unchanged.
+  # For Ollama (local):
+  - Install from https://ollama.com
+  - Run: ollama pull llama3.2
+
+  # For Groq:
+  - Get API key from https://console.groq.com
+  - Add to .env: GROQ_API_KEY=your_key
+
+  # For Gemini:
+  - Get API key from https://aistudio.google.com/app/apikey
+  - Add to .env: GEMINI_API_KEY=your_key
+
+Environment Variables:
+  AI_PROVIDERS=ollama,groq,gemini  # Order of preference (comma-separated)
+  OLLAMA_URL=http://localhost:11434
+  OLLAMA_MODEL=llama3.2
+  GROQ_API_KEY=your_key
+  GROQ_MODEL=llama-3.1-8b-instant
+  GEMINI_API_KEY=your_key
+  GEMINI_MODEL=gemini-2.0-flash
+
+If all providers fail, original text is returned unchanged.
 """
-import json
+
 import logging
-import re
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
-# Optional: load .env so GEMINI_API_KEY is available when this module is used standalone
+# Optional: load .env so env vars are available when this module is used standalone
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-NORMALIZE_PROMPT = """You are a job board editor. Normalize the following job post so it has a consistent, professional format.
+from ai_providers.base import FallbackAIProvider
+from ai_providers import get_provider
 
-Rules:
-- Title: One clear job title (e.g. "Software Engineer", "Accountant"). No ALL CAPS, no extra punctuation.
-- Company: Company or organization name only. Clean and concise.
-- Description: Use exactly these sections in order, with these headings. Keep the original meaning and details. Use plain text, no markdown.
-  1) "About the role" - 1-2 sentences summarizing the position.
-  2) "Responsibilities" - bullet points or short paragraphs.
-  3) "Requirements" - bullet points or short list.
-  4) "How to apply" - instructions or "Apply via the link below." Do not remove URLs or emails from the description.
+# Provider priority from environment (comma-separated list)
+AI_PROVIDERS = os.getenv("AI_PROVIDERS", "ollama,groq,gemini").strip()
 
-If a section has no content, omit that section. Preserve any URLs and email addresses in the description exactly as given.
-Output ONLY a valid JSON object with exactly these keys: "title", "company", "description". No other text, no code fence.
+# Initialize fallback provider with available providers
+def _get_fallback_provider() -> FallbackAIProvider:
+    """Initialize the fallback provider chain."""
+    provider_names = [p.strip().lower() for p in AI_PROVIDERS.split(",") if p.strip()]
 
-Job title: {title}
-Company: {company}
-Description:
-{description}
-"""
+    providers = []
+    for name in provider_names:
+        try:
+            provider = get_provider(name)
+            if provider is None:
+                logger.warning(f"Unknown AI provider: {name}")
+                continue
+
+            providers.append(provider)
+            logger.debug(f"Added {name} to provider chain")
+        except ImportError as e:
+            logger.warning(
+                "Skipping %s provider because an optional dependency is missing: %s",
+                name,
+                e,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize {name} provider: {e}")
+
+    if not providers:
+        logger.warning("No AI providers configured or available")
+
+    return FallbackAIProvider(providers)
+
+
+# Global fallback provider instance
+_fallback_provider: Optional[FallbackAIProvider] = None
+
+
+def _get_provider() -> FallbackAIProvider:
+    """Get or initialize the fallback provider."""
+    global _fallback_provider
+    if _fallback_provider is None:
+        _fallback_provider = _get_fallback_provider()
+    return _fallback_provider
 
 
 def normalize_job_text(
@@ -50,52 +98,66 @@ def normalize_job_text(
     description: Optional[str] = None,
 ) -> Dict[str, Optional[str]]:
     """
-    Call Gemini to normalize job title, company, and description.
+    Normalize job title, company, and description using AI providers.
+
+    Tries providers in order of preference (Ollama -> Groq -> Gemini).
     Returns dict with keys title, company, description (normalized or original).
-    If GEMINI_API_KEY is not set or the API fails, returns original values.
+    If no providers are available or all fail, returns original values.
+
+    Args:
+        title: Job title to normalize
+        company: Company name to normalize
+        description: Job description to normalize
+
+    Returns:
+        Dict with keys 'title', 'company', 'description' containing normalized text
     """
     out = {
         "title": title or "",
         "company": company or "",
         "description": description or "",
     }
-    if not GEMINI_API_KEY:
-        logger.debug("GEMINI_API_KEY not set, skipping AI normalization")
-        return out
+
     if not (title or company or description):
         return out
 
-    prompt = NORMALIZE_PROMPT.format(
-        title=title or "Not provided",
-        company=company or "Not provided",
-        description=(description or "Not provided")[:12000],
-    )
     try:
-        from google import genai
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-        )
-        text = (getattr(response, "text", None) or getattr(response, "candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "") or "").strip()
-        if not text:
+        provider = _get_provider()
+
+        if not provider.is_available():
+            logger.debug("No AI providers available, skipping normalization")
             return out
-        # Remove optional markdown code block
-        if text.startswith("```"):
-            text = re.sub(r"^```(?:json)?\s*", "", text)
-            text = re.sub(r"\s*```$", "", text)
-        data = json.loads(text)
-        if isinstance(data, dict):
-            if "title" in data and data["title"] is not None:
-                out["title"] = str(data["title"]).strip() or out["title"]
-            if "company" in data and data["company"] is not None:
-                out["company"] = str(data["company"]).strip() or out["company"]
-            if "description" in data and data["description"] is not None:
-                out["description"] = str(data["description"]).strip() or out["description"]
+
+        result = provider.normalize_job_text(title, company, description)
+
+        # Validate result
+        if result and (result.get("title") or result.get("company") or result.get("description")):
+            return result
+
         return out
-    except ImportError:
-        logger.warning("google-genai not installed. pip install google-genai for AI normalization.")
-        return out
+
     except Exception as e:
-        logger.warning("Gemini normalization failed: %s. Using original text.", e)
+        logger.warning(f"AI normalization failed: {e}. Using original text.")
         return out
+
+
+def get_available_providers() -> list:
+    """
+    Get list of currently available AI providers.
+
+    Returns:
+        List of provider names that are available
+    """
+    provider = _get_provider()
+    return [p.name for p in provider.providers if p.is_available()]
+
+
+def clear_cache():
+    """Clear the normalization cache."""
+    provider = _get_provider()
+    provider.clear_cache()
+    logger.debug("AI normalization cache cleared")
+
+
+# Backwards compatibility - keep the old function name if anyone uses it
+normalize_job = normalize_job_text

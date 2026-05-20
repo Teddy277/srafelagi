@@ -17,6 +17,8 @@ from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 
+from utils import normalize_url, normalize_text, calculate_job_similarity
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
@@ -259,6 +261,13 @@ class Database:
                     );
                 """)
                 cur.execute("""
+                    CREATE TABLE IF NOT EXISTS processed_telegram_messages (
+                        telegram_id      VARCHAR(100) PRIMARY KEY,
+                        telegram_channel VARCHAR(100),
+                        processed_at     TIMESTAMP DEFAULT NOW()
+                    );
+                """)
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS job_views (
                         id          SERIAL PRIMARY KEY,
                         job_id      INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -285,6 +294,13 @@ class Database:
                         posted_at TIMESTAMP DEFAULT NOW(),
                         PRIMARY KEY (job_id, channel)
                     );
+                """)
+                cur.execute("""
+                    INSERT INTO processed_telegram_messages (telegram_id, telegram_channel)
+                    SELECT DISTINCT telegram_id, telegram_channel
+                    FROM jobs
+                    WHERE telegram_id IS NOT NULL AND telegram_id <> ''
+                    ON CONFLICT (telegram_id) DO NOTHING
                 """)
             self.conn.commit()
             logger.info("Tables verified")
@@ -364,6 +380,9 @@ class Database:
                     ('channel_username', 'VARCHAR(100)'),
                     ('telegram_text', 'TEXT'),
                     ('updated_at', 'TIMESTAMP DEFAULT NOW()'),
+                    ('source_url_normalized', 'TEXT'),
+                    ('title_normalized', 'VARCHAR(500)'),
+                    ('company_normalized', 'VARCHAR(500)'),
                 ]
 
                 for col_name, col_type in required_columns:
@@ -418,6 +437,28 @@ class Database:
                     except Exception:
                         self.conn.rollback()
 
+                if 'idx_jobs_normalized_url' not in existing_indexes:
+                    try:
+                        cur.execute("""
+                            CREATE INDEX idx_jobs_normalized_url
+                            ON jobs (source_url_normalized)
+                            WHERE source_url_normalized IS NOT NULL;
+                        """)
+                        logger.info("Created index: idx_jobs_normalized_url")
+                    except Exception:
+                        self.conn.rollback()
+
+                if 'idx_jobs_title_company_normalized' not in existing_indexes:
+                    try:
+                        cur.execute("""
+                            CREATE INDEX idx_jobs_title_company_normalized
+                            ON jobs (title_normalized, company_normalized)
+                            WHERE title_normalized IS NOT NULL AND company_normalized IS NOT NULL;
+                        """)
+                        logger.info("Created index: idx_jobs_title_company_normalized")
+                    except Exception:
+                        self.conn.rollback()
+
             self.conn.commit()
             logger.info("Database schema ready")
 
@@ -457,6 +498,124 @@ class Database:
             except Exception:
                 pass
             return False
+
+    def find_duplicate_job(
+        self,
+        source_url: Optional[str] = None,
+        title: Optional[str] = None,
+        company: Optional[str] = None,
+        description: Optional[str] = None,
+        telegram_id: Optional[str] = None,
+        telegram_channel: Optional[str] = None,
+        similarity_threshold: float = 0.85,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Find a duplicate job using multiple strategies:
+        1. Exact normalized URL match (fast path)
+        2. Title + Company similarity (for jobs without URL)
+        3. Telegram ID + Channel match (for text-only jobs)
+
+        Args:
+            source_url: Job source URL
+            title: Job title
+            company: Company name
+            description: Job description (for similarity check)
+            telegram_id: Telegram message ID
+            telegram_channel: Telegram channel
+            similarity_threshold: Minimum similarity score (0.0-1.0)
+
+        Returns:
+            Duplicate job dict if found, None otherwise
+        """
+        self._ensure_connection()
+
+        try:
+            # Strategy 1: Check by normalized URL
+            if source_url:
+                normalized_url = normalize_url(source_url)
+                if normalized_url:
+                    with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        # Check exact normalized URL match
+                        cur.execute(
+                            """SELECT id, source_url, title, company, description, telegram_id, telegram_channel
+                               FROM jobs WHERE source_url_normalized = %s LIMIT 1""",
+                            (normalized_url,)
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            logger.debug(f"Duplicate found by normalized URL: {normalized_url[:60]}...")
+                            return dict(row)
+
+                        # Also check original URL (for existing jobs before migration)
+                        cur.execute(
+                            "SELECT id, source_url, title, company FROM jobs WHERE source_url = %s LIMIT 1",
+                            (source_url,)
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            logger.debug(f"Duplicate found by exact URL: {source_url[:60]}...")
+                            return dict(row)
+
+            # Strategy 2: Check by normalized title + company similarity
+            if title and company:
+                normalized_title = normalize_text(title)
+                normalized_company = normalize_text(company)
+
+                if normalized_title and normalized_company:
+                    with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        # Get recent jobs with similar title/company
+                        cur.execute(
+                            """SELECT id, source_url, title, company, description, telegram_id, telegram_channel,
+                                      title_normalized, company_normalized
+                               FROM jobs
+                               WHERE title_normalized = %s OR title ILIKE %s
+                               ORDER BY created_at DESC
+                               LIMIT 20""",
+                            (normalized_title, f"%{normalized_title}%")
+                        )
+                        rows = cur.fetchall()
+
+                        for row in rows:
+                            # Check company similarity
+                            row_company_norm = row.get('company_normalized') or normalize_text(row.get('company', ''))
+                            if row_company_norm:
+                                company_sim = calculate_job_similarity(
+                                    company, None, row.get('company', ''), None
+                                )
+                                if company_sim >= 0.8:  # Company must be very similar
+                                    # Check title similarity
+                                    title_sim = calculate_job_similarity(
+                                        title, None, row.get('title', ''), None
+                                    )
+                                    if title_sim >= similarity_threshold:
+                                        logger.debug(f"Duplicate found by title+company similarity: {title[:60]}...")
+                                        return dict(row)
+
+            # Strategy 3: Check by telegram_id + channel (for text-only jobs)
+            if telegram_id and telegram_channel:
+                with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(
+                        """SELECT id, source_url, title, company, description, telegram_id, telegram_channel
+                           FROM jobs
+                           WHERE telegram_id = %s AND telegram_channel = %s
+                           AND (source_url IS NULL OR source_url = '')
+                           LIMIT 1""",
+                        (str(telegram_id), telegram_channel)
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        logger.debug(f"Duplicate found by telegram_id + channel")
+                        return dict(row)
+
+            return None
+
+        except Exception as e:
+            logger.error(f"find_duplicate_job failed: {e}")
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return None
 
     def get_job_by_source_url(self, source_url: str) -> Optional[Dict[str, Any]]:
         """Get one job row by source_url (for refresh/update). Returns dict with id, telegram_id, telegram_channel, etc."""
@@ -502,6 +661,57 @@ class Database:
                 pass
             return False
 
+    def is_telegram_message_processed(self, telegram_id) -> bool:
+        """Return True if this Telegram message was already handled by the listener."""
+        if telegram_id is None:
+            return False
+
+        telegram_id = str(telegram_id)
+        self._ensure_connection()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM processed_telegram_messages WHERE telegram_id = %s LIMIT 1",
+                    (telegram_id,)
+                )
+                if cur.fetchone() is not None:
+                    return True
+        except Exception as e:
+            logger.debug("is_telegram_message_processed failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+
+        return self.exists_job_with_telegram_id(telegram_id)
+
+    def mark_telegram_message_processed(self, telegram_id, telegram_channel: Optional[str] = None) -> None:
+        """Record that a Telegram message has already been handled."""
+        if telegram_id is None:
+            return
+
+        self._ensure_connection()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO processed_telegram_messages (telegram_id, telegram_channel)
+                    VALUES (%s, %s)
+                    ON CONFLICT (telegram_id) DO UPDATE SET
+                        telegram_channel = COALESCE(EXCLUDED.telegram_channel, processed_telegram_messages.telegram_channel)
+                    """,
+                    (str(telegram_id), telegram_channel)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logger.debug("mark_telegram_message_processed failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+
     def get_source_urls_like(self, pattern: str) -> List[str]:
         """Return list of source_urls where source_url LIKE pattern (e.g. %%ethiojobs.net%%)."""
         if not pattern or "%" not in pattern:
@@ -531,6 +741,7 @@ class Database:
         Save or update a job.
         Uses source_url for dedupe when set, else (telegram_id, telegram_channel).
         Auto-reconnects if connection is lost.
+        Enhanced duplicate detection using normalized fields and similarity matching.
         """
         self._ensure_connection()
 
@@ -538,15 +749,44 @@ class Database:
         if isinstance(source_url, str) and source_url.strip() == '':
             source_url = None
 
+        title = job_data.get('title')
+        company = job_data.get('company')
+        telegram_id = str(job_data.get('telegram_id', '')) if job_data.get('telegram_id') else None
+        telegram_channel = job_data.get('telegram_channel')
+
+        # Normalize fields for storage
+        source_url_normalized = normalize_url(source_url) if source_url else None
+        title_normalized = normalize_text(title) if title else None
+        company_normalized = normalize_text(company) if company else None
+
+        # Check for duplicates using enhanced detection
+        duplicate = self.find_duplicate_job(
+            source_url=source_url,
+            title=title,
+            company=company,
+            description=job_data.get('description'),
+            telegram_id=telegram_id,
+            telegram_channel=telegram_channel,
+            similarity_threshold=0.85,
+        )
+
+        if duplicate:
+            logger.debug(f"Found duplicate job #{duplicate.get('id')}, updating...")
+            # Update existing job with new data
+            return self._update_job(duplicate['id'], job_data)
+
         params = {
-            'telegram_id': str(job_data.get('telegram_id', '')),
-            'telegram_channel': job_data.get('telegram_channel'),
+            'telegram_id': telegram_id,
+            'telegram_channel': telegram_channel,
             'telegram_date': job_data.get('telegram_date'),
-            'title': job_data.get('title'),
-            'company': job_data.get('company'),
+            'title': title,
+            'company': company,
             'location': job_data.get('location'),
             'description': job_data.get('description'),
             'source_url': source_url,
+            'source_url_normalized': source_url_normalized,
+            'title_normalized': title_normalized,
+            'company_normalized': company_normalized,
             'apply_url': job_data.get('apply_url'),
             'apply_email': job_data.get('apply_email'),
             'apply_type': job_data.get('apply_type'),
@@ -573,6 +813,62 @@ class Database:
             except Exception:
                 pass
             return self._simple_insert(job_data)
+
+    def _update_job(self, job_id: int, job_data: Dict[str, Any]) -> Optional[int]:
+        """Update an existing job with new data."""
+        try:
+            with self.conn.cursor() as cur:
+                # Normalize fields
+                title = job_data.get('title')
+                company = job_data.get('company')
+                source_url = job_data.get('source_url')
+
+                title_normalized = normalize_text(title) if title else None
+                company_normalized = normalize_text(company) if company else None
+                source_url_normalized = normalize_url(source_url) if source_url else None
+
+                cur.execute("""
+                    UPDATE jobs SET
+                        title = COALESCE(%s, title),
+                        company = COALESCE(%s, company),
+                        location = COALESCE(%s, location),
+                        description = COALESCE(%s, description),
+                        apply_url = COALESCE(%s, apply_url),
+                        apply_email = COALESCE(%s, apply_email),
+                        apply_type = COALESCE(%s, apply_type),
+                        deadline_text = COALESCE(%s, deadline_text),
+                        salary = COALESCE(%s, salary),
+                        scraped_data = %s,
+                        telegram_id = COALESCE(%s, telegram_id),
+                        telegram_channel = COALESCE(%s, telegram_channel),
+                        telegram_date = COALESCE(%s, telegram_date),
+                        raw_text = COALESCE(%s, raw_text),
+                        title_normalized = COALESCE(%s, title_normalized),
+                        company_normalized = COALESCE(%s, company_normalized),
+                        source_url_normalized = COALESCE(%s, source_url_normalized),
+                        created_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = %s
+                    RETURNING id
+                """, (
+                    title, company,
+                    job_data.get('location'), job_data.get('description'),
+                    job_data.get('apply_url'), job_data.get('apply_email'),
+                    job_data.get('apply_type'), job_data.get('deadline'),
+                    job_data.get('salary'), Json(job_data.get('scraped_data', {})),
+                    str(job_data.get('telegram_id', '')), job_data.get('telegram_channel'),
+                    job_data.get('telegram_date'), job_data.get('raw_text'),
+                    title_normalized, company_normalized, source_url_normalized,
+                    job_id,
+                ))
+                result = cur.fetchone()
+                self.conn.commit()
+                logger.info(f"Updated job #{job_id} (duplicate detection)")
+                return result[0] if result else job_id
+        except Exception as e:
+            logger.error(f"_update_job failed: {e}")
+            self.conn.rollback()
+            return None
 
     def _upsert_by_url(self, params: Dict) -> Optional[int]:
         """
@@ -607,6 +903,9 @@ class Database:
                             raw_text = COALESCE(%s, raw_text),
                             channel_username = %s,
                             telegram_text = %s,
+                            title_normalized = COALESCE(%s, title_normalized),
+                            company_normalized = COALESCE(%s, company_normalized),
+                            source_url_normalized = COALESCE(%s, source_url_normalized),
                             created_at = NOW(),
                             updated_at = NOW()
                         WHERE id = %s
@@ -620,6 +919,9 @@ class Database:
                         params['telegram_id'], params['telegram_channel'],
                         params['telegram_date'], params['raw_text'],
                         params['telegram_channel'], params['raw_text'],
+                        params.get('title_normalized'),
+                        params.get('company_normalized'),
+                        params.get('source_url_normalized'),
                         existing[0],
                     ))
                     result = cur.fetchone()
@@ -631,14 +933,14 @@ class Database:
                         INSERT INTO jobs (
                             telegram_id, telegram_channel, telegram_date,
                             title, company, location, description,
-                            source_url, apply_url, apply_email, apply_type,
+                            source_url, source_url_normalized, apply_url, apply_email, apply_type,
                             deadline_text, salary, scraped_data, raw_text,
-                            channel_username, telegram_text,
+                            channel_username, telegram_text, title_normalized, company_normalized,
                             created_at, updated_at
                         ) VALUES (
                             %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, NOW(), NOW()
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, NOW(), NOW()
                         )
                         RETURNING id
                     """, (
@@ -646,11 +948,14 @@ class Database:
                         params['telegram_date'], params['title'],
                         params['company'], params['location'],
                         params['description'], params['source_url'],
+                        params.get('source_url_normalized'),
                         params['apply_url'], params['apply_email'],
                         params['apply_type'], params['deadline'],
                         params['salary'], params['scraped_data'],
                         params['raw_text'], params['telegram_channel'],
                         params['raw_text'],
+                        params.get('title_normalized'),
+                        params.get('company_normalized'),
                     ))
                     result = cur.fetchone()
                     self.conn.commit()
@@ -685,6 +990,9 @@ class Database:
                             apply_type = COALESCE(%s, apply_type),
                             deadline_text = COALESCE(%s, deadline_text),
                             salary = COALESCE(%s, salary),
+                            title_normalized = COALESCE(%s, title_normalized),
+                            company_normalized = COALESCE(%s, company_normalized),
+                            source_url_normalized = COALESCE(%s, source_url_normalized),
                             created_at = NOW(),
                             updated_at = NOW()
                         WHERE id = %s
@@ -694,7 +1002,11 @@ class Database:
                         params['location'], params['description'],
                         params['apply_url'], params['apply_email'],
                         params['apply_type'], params['deadline'],
-                        params['salary'], existing[0],
+                        params['salary'],
+                        params.get('title_normalized'),
+                        params.get('company_normalized'),
+                        params.get('source_url_normalized'),
+                        existing[0],
                     ))
                     result = cur.fetchone()
                     self.conn.commit()
@@ -706,12 +1018,12 @@ class Database:
                             title, company, location, description,
                             apply_url, apply_email, apply_type,
                             deadline_text, salary, scraped_data, raw_text,
-                            channel_username, telegram_text,
+                            channel_username, telegram_text, title_normalized, company_normalized,
                             created_at, updated_at
                         ) VALUES (
                             %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, NOW(), NOW()
+                            %s, %s, %s, %s, NOW(), NOW()
                         )
                         RETURNING id
                     """, (
@@ -723,6 +1035,8 @@ class Database:
                         params['deadline'], params['salary'],
                         params['scraped_data'], params['raw_text'],
                         params['telegram_channel'], params['raw_text'],
+                        params.get('title_normalized'),
+                        params.get('company_normalized'),
                     ))
                     result = cur.fetchone()
                     self.conn.commit()
@@ -739,6 +1053,13 @@ class Database:
             self._ensure_connection()
 
             source_url = (job_data.get('source_url') or '').strip() or None
+            title = job_data.get('title')
+            company = job_data.get('company')
+
+            # Normalize fields
+            source_url_normalized = normalize_url(source_url) if source_url else None
+            title_normalized = normalize_text(title) if title else None
+            company_normalized = normalize_text(company) if company else None
 
             with self.conn.cursor() as cur:
                 if source_url:
@@ -762,14 +1083,22 @@ class Database:
                     cur.execute("""
                         UPDATE jobs SET
                             title = COALESCE(%s, title),
+                            company = COALESCE(%s, company),
                             description = COALESCE(%s, description),
+                            title_normalized = COALESCE(%s, title_normalized),
+                            company_normalized = COALESCE(%s, company_normalized),
+                            source_url_normalized = COALESCE(%s, source_url_normalized),
                             created_at = NOW(),
                             updated_at = NOW()
                         WHERE id = %s
                         RETURNING id
                     """, (
-                        job_data.get('title'),
+                        title,
+                        company,
                         job_data.get('description'),
+                        title_normalized,
+                        company_normalized,
+                        source_url_normalized,
                         existing[0],
                     ))
                     result = cur.fetchone()
@@ -781,25 +1110,26 @@ class Database:
                     INSERT INTO jobs (
                         telegram_id, telegram_channel, telegram_date,
                         title, company, location, description,
-                        source_url, apply_url, apply_email, apply_type,
+                        source_url, source_url_normalized, apply_url, apply_email, apply_type,
                         deadline_text, salary, scraped_data, raw_text,
-                        channel_username, telegram_text,
+                        channel_username, telegram_text, title_normalized, company_normalized,
                         created_at, updated_at
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, NOW(), NOW()
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, NOW(), NOW()
                     )
                     RETURNING id
                 """, (
                     str(job_data.get('telegram_id', '')),
                     job_data.get('telegram_channel'),
                     job_data.get('telegram_date'),
-                    job_data.get('title'),
-                    job_data.get('company'),
+                    title,
+                    company,
                     job_data.get('location'),
                     job_data.get('description'),
                     source_url,
+                    source_url_normalized,
                     job_data.get('apply_url'),
                     job_data.get('apply_email'),
                     job_data.get('apply_type'),
@@ -809,6 +1139,8 @@ class Database:
                     job_data.get('raw_text'),
                     job_data.get('telegram_channel'),
                     job_data.get('raw_text'),
+                    title_normalized,
+                    company_normalized,
                 ))
                 result = cur.fetchone()
 

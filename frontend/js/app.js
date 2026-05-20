@@ -3,12 +3,26 @@
 // ============================================
 
 // ============ CONFIGURATION ============
-const API_BASE = (window.location.port === '8080' || window.location.port === '') ? '' : 'http://localhost:8080';
+function resolveApiBase() {
+    if (typeof window.SRAFELAGI_API_BASE === 'string' && window.SRAFELAGI_API_BASE.trim()) {
+        return window.SRAFELAGI_API_BASE.trim().replace(/\/$/, '');
+    }
+    try {
+        const saved = window.localStorage.getItem('srafelagi_api_base');
+        if (saved && saved.trim()) {
+            return saved.trim().replace(/\/$/, '');
+        }
+    } catch (error) {
+        // Fall back to same-origin requests when storage is unavailable.
+    }
+    return '';
+}
+
+const API_BASE = resolveApiBase();
 const JOBS_PER_PAGE = 12;
 
 // Channel username (no @) -> long display name for job cards and modal
 const CHANNEL_DISPLAY_NAMES = {
-    dailyjobethiopia: 'Daily Job Ethiopia',
     effoyjobs: 'Effoy Jobs',
     informationnegari: 'Information Negari',
     elelanajobs: 'Elelana Jobs',

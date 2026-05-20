@@ -16,7 +16,6 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 
 # Channels to scrape - JUST USERNAMES!
 CHANNELS = [
-    'dailyjobethiopia',
     'effoyjobs',
     'elelanajobs',
     'harmeejobs',

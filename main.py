@@ -24,6 +24,7 @@ import os
 import re
 import logging
 import asyncio
+import shutil
 from datetime import datetime, date
 from typing import Optional, List
 from urllib.parse import urlparse, parse_qs
@@ -35,6 +36,7 @@ from database import Database, parse_deadline_date
 from telegram_parser import parse_telegram_message
 from scrapers import get_scraper
 from ai_normalize import normalize_job_text
+from utils import normalize_url, normalize_text
 
 # ============================================================
 # CONFIGURATION
@@ -81,7 +83,44 @@ db = Database()
 # TELETHON CLIENT
 # ============================================================
 
-client = TelegramClient('job_listener', API_ID, API_HASH)
+TELEGRAM_SESSION_NAME = os.getenv('TELEGRAM_SESSION_NAME', 'job_listener').strip() or 'job_listener'
+TELEGRAM_SESSION_DIR = os.getenv('TELEGRAM_SESSION_DIR', '').strip()
+
+
+def get_telegram_session_name() -> str:
+    """
+    Store the Telethon SQLite session outside the OneDrive workspace by default.
+    This avoids intermittent "database is locked" errors on the session file.
+    """
+    if TELEGRAM_SESSION_DIR:
+        base_dir = TELEGRAM_SESSION_DIR
+    else:
+        local_app_data = os.getenv('LOCALAPPDATA')
+        if local_app_data:
+            base_dir = os.path.join(local_app_data, 'ethiopian-jobs', 'telethon')
+        else:
+            base_dir = os.path.join(os.getcwd(), '.telethon')
+
+    os.makedirs(base_dir, exist_ok=True)
+    session_name = os.path.join(base_dir, TELEGRAM_SESSION_NAME)
+    legacy_session_file = os.path.join(os.getcwd(), f'{TELEGRAM_SESSION_NAME}.session')
+    target_session_file = f'{session_name}.session'
+
+    if (
+        os.path.abspath(target_session_file) != os.path.abspath(legacy_session_file)
+        and not os.path.exists(target_session_file)
+        and os.path.exists(legacy_session_file)
+    ):
+        try:
+            shutil.copy2(legacy_session_file, target_session_file)
+            logger.info("Copied Telegram session to %s", target_session_file)
+        except Exception as e:
+            logger.warning("Could not copy Telegram session to %s: %s", target_session_file, e)
+
+    return session_name
+
+
+client = TelegramClient(get_telegram_session_name(), API_ID, API_HASH)
 
 # Populated in main() with peer IDs of monitored channels; handler ignores other chats
 ALLOWED_CHAT_IDS = set()
@@ -318,6 +357,8 @@ def is_scrapable_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
         domain = parsed.netloc.lower().split(':')[0]
+        if (parsed.path or '').strip() in ('', '/'):
+            return False
         return domain in KNOWN_JOB_DOMAINS
     except Exception:
         return False
@@ -717,7 +758,7 @@ def build_job_data(
             cleaned_title = normalized.get("title") or cleaned_title
             cleaned_company = normalized.get("company") or cleaned_company
             cleaned_description = normalized.get("description") or cleaned_description
-            logger.info("  Applied Gemini normalization to job text")
+            logger.info("  Applied AI normalization to job text")
     except Exception as e:
         logger.debug("AI normalization skipped: %s", e)
 
@@ -745,6 +786,11 @@ def build_job_data(
         cleaned_description
     ) if cleaned_description else None
 
+    # ── Normalize fields for duplicate detection ──────────────────────
+    source_url_normalized = normalize_url(source_url_val) if source_url_val else None
+    title_normalized = normalize_text(cleaned_title) if cleaned_title else None
+    company_normalized = normalize_text(cleaned_company) if cleaned_company else None
+
     # ── Build dict ───────────────────────────────────────────────────
     job_data = {
         'telegram_id': telegram_id,
@@ -755,13 +801,16 @@ def build_job_data(
         'location': final_location,
         'description': formatted_description,
         'source_url': source_url_val,
+        'source_url_normalized': source_url_normalized,
+        'title_normalized': title_normalized,
+        'company_normalized': company_normalized,
         'apply_url': apply_url,
         'apply_email': apply_email,
         'apply_type': scraped_apply_type,
         'deadline': final_deadline,
         'salary': salary,
         'scraped_data': scraped_data if isinstance(scraped_data, dict) else {},
-        'raw_text': raw_text, 
+        'raw_text': raw_text,
     }
 
     # Infer apply_type
@@ -824,7 +873,7 @@ async def process_listing_page(
             logger.info(f"  [{i}/{len(job_urls)}] Scraping: {job_url}")
 
             if db.job_exists(job_url):
-                logger.info(f"  [{i}/{len(job_urls)}] Already in DB, skipping.")
+                logger.info(f"  [{i}/{len(job_urls)}] Job URL already exists in jobs table, skipping scrape.")
                 skipped += 1
                 continue
 
@@ -922,7 +971,7 @@ async def process_url(
         logger.info(f"  Scraping: {url}")
 
         if db.job_exists(url):
-            logger.info(f"  Already in DB, skipping: {url}")
+            logger.info(f"  Job URL already exists in jobs table, skipping scrape: {url}")
             return
 
         job_result = await scraper.scrape(url)
@@ -1037,15 +1086,25 @@ async def process_raw_text(
 
     formatted_description = format_description_with_links(description)
 
+    # Normalize fields for duplicate detection
+    cleaned_title = clean_telegram_text(title)
+    cleaned_company = clean_telegram_text(company) if company else None
+    title_normalized = normalize_text(cleaned_title) if cleaned_title else None
+    company_normalized = normalize_text(cleaned_company) if cleaned_company else None
+    source_url_normalized = normalize_url(source_url) if source_url else None
+
     job_data = {
         'telegram_id': telegram_id,
         'telegram_channel': source_channel,
         'telegram_date': message_date,
-        'title': clean_telegram_text(title),
-        'company': clean_telegram_text(company) if company else None,
+        'title': cleaned_title,
+        'company': cleaned_company,
         'location': location,
         'description': formatted_description,
         'source_url': source_url,
+        'source_url_normalized': source_url_normalized,
+        'title_normalized': title_normalized,
+        'company_normalized': company_normalized,
         'apply_url': apply_url,
         'apply_email': apply_email,
         'apply_type': 'email' if apply_email else ('url' if apply_url else None),
@@ -1159,8 +1218,12 @@ async def handler(event):
     message = event.message
     source_channel = get_channel_name(event)
     message_date = message.date
+    telegram_id = generate_telegram_id(event.chat_id, message.id)
+    if db.is_telegram_message_processed(telegram_id):
+        return
     logger.info(f"New message in {source_channel} (msg_id={message.id})")
     await process_message(message, event.chat_id, source_channel, message_date)
+    db.mark_telegram_message_processed(telegram_id, source_channel)
 
 
 # ============================================================
@@ -1181,11 +1244,12 @@ async def poll_channels_once(resolved_entities):
             if not message or getattr(message, "id", None) is None:
                 continue
             telegram_id = generate_telegram_id(chat_id, message.id)
-            if db.exists_job_with_telegram_id(telegram_id):
+            if db.is_telegram_message_processed(telegram_id):
                 continue
             logger.info("Poll: new message in %s (msg_id=%s)", source_channel, message.id)
             try:
                 await process_message(message, chat_id, source_channel, message.date)
+                db.mark_telegram_message_processed(telegram_id, source_channel)
             except Exception as e:
                 logger.error("Poll process_message error: %s", e, exc_info=True)
 

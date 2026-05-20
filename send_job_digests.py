@@ -19,7 +19,11 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
 EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER or "noreply@srafelagi.et").strip()
-SITE_BASE_URL = os.getenv("SITE_BASE_URL", "http://localhost:8080").strip().rstrip("/")
+PUBLIC_HOST = (os.getenv("PUBLIC_HOST") or os.getenv("HOST") or "localhost").strip() or "localhost"
+if PUBLIC_HOST in {"0.0.0.0", "127.0.0.1", "::", "::1"}:
+    PUBLIC_HOST = "localhost"
+DEFAULT_SITE_BASE_URL = f"http://{PUBLIC_HOST}:{int(os.getenv('PORT', '8000'))}"
+SITE_BASE_URL = os.getenv("SITE_BASE_URL", DEFAULT_SITE_BASE_URL).strip().rstrip("/")
 
 
 def send_email(to: str, subject: str, body_text: str, body_html: str = None) -> bool:

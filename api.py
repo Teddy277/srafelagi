@@ -2,7 +2,9 @@
 Srafelagi API - Complete Version
 """
 import os
+import socket
 import hashlib
+from contextlib import closing
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -40,6 +42,44 @@ security = HTTPBearer()
 # Debug: Print admin config (remove in production)
 print(f"🔐 Admin username: {ADMIN_USERNAME}")
 print(f"🔐 Admin password hash: {ADMIN_PASSWORD_HASH[:16]}...")
+
+def _display_host(host: str) -> str:
+    if host in {"0.0.0.0", "127.0.0.1", "::", "::1"}:
+        return "localhost"
+    return host
+
+
+def _can_bind(host: str, port: int) -> bool:
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+        return True
+
+
+def _pick_server_port(host: str, preferred_port: int) -> tuple[int, bool]:
+    candidates = []
+    for candidate in [preferred_port, 8000, 8001, 8002, 3000, 5000, 8888, 9000]:
+        if candidate > 0 and candidate not in candidates:
+            candidates.append(candidate)
+
+    for candidate in candidates:
+        if _can_bind(host, candidate):
+            return candidate, candidate != preferred_port
+
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+        sock.bind((host, 0))
+        return sock.getsockname()[1], True
+
+
+SERVER_HOST = (os.getenv("HOST", "127.0.0.1").strip() or "127.0.0.1")
+PREFERRED_PORT = int(os.getenv("PORT", "8000"))
+SERVER_PORT, SERVER_PORT_WAS_FALLBACK = _pick_server_port(SERVER_HOST, PREFERRED_PORT)
+PUBLIC_HOST = (os.getenv("PUBLIC_HOST", "").strip() or _display_host(SERVER_HOST))
+DEFAULT_SITE_BASE_URL = f"http://{PUBLIC_HOST}:{SERVER_PORT}"
+
 
 def create_access_token(username: str) -> str:
     if not JWT_AVAILABLE:
@@ -225,7 +265,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-SITE_BASE_URL = os.getenv("SITE_BASE_URL", "http://localhost:8080").strip().rstrip("/")
+SITE_BASE_URL = os.getenv("SITE_BASE_URL", DEFAULT_SITE_BASE_URL).strip().rstrip("/")
 SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
@@ -642,11 +682,17 @@ else:
 # ============ MAIN ============
 
 if __name__ == "__main__":
+    open_url = f"http://{_display_host(SERVER_HOST)}:{SERVER_PORT}"
     print("=" * 50)
     print("🚀 Srafelagi Portal")
     print("=" * 50)
-    print(f"📍 Open: http://localhost:8080")
-    print(f"📖 API Docs: http://localhost:8080/docs")
+    print(f"📍 Open: {open_url}")
+    print(f"📖 API Docs: {open_url}/docs")
     print(f"💡 Hard refresh: Ctrl+Shift+R")
     print("=" * 50)
-    uvicorn.run(app, host="127.0.0.1", port=8080)
+    if SERVER_PORT_WAS_FALLBACK:
+        print(
+            f"Requested port {PREFERRED_PORT} is unavailable. "
+            f"Using {SERVER_PORT} instead. Set PORT in .env to override."
+        )
+    uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)
