@@ -1,0 +1,63 @@
+services:
+  # Single free web service — runs API + Telegram listener + bot together
+  - type: web
+    name: srafelagi
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python start.py
+    envVars:
+      # ── Database ──────────────────────────────────────────
+      - key: DATABASE_URL
+        sync: false          # paste your Neon PostgreSQL URL
+
+      # ── Telegram (listener + bot) ─────────────────────────
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: CHANNELS
+        sync: false          # e.g. effoyjobs,geezjobs_ethiopia,hahujobs
+      - key: TELEGRAM_SESSION_STRING
+        sync: false          # run: python generate_session.py  (user session)
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_SESSION_STRING
+        sync: false          # run: python generate_session.py  (bot session)
+
+      # ── AI (Gemini) ───────────────────────────────────────
+      - key: AI_PROVIDERS
+        value: gemini
+      - key: GEMINI_API_KEYS
+        sync: false          # comma-separated keys
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
+
+      # ── Admin ─────────────────────────────────────────────
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false          # run: python -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()).decode())"
+      - key: JWT_SECRET
+        sync: false          # any long random string
+
+      # ── Email (SMTP) ──────────────────────────────────────
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+
+      # ── Server ────────────────────────────────────────────
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: "8000"
+      - key: SITE_BASE_URL
+        sync: false          # https://srafelagi.onrender.com (your Render URL)
+      - key: SITE_URL
+        sync: false          # same as above (used by Telegram bot)

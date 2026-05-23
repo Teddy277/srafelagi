@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Srafelagi — Jobs in Addis Ababa & Ethiopia 🇪🇹</title>
+    <meta name="description" content="All Ethiopian job boards and channels in one place. Srafelagi, GeezJobs, Afriwork and more. Updated daily.">
+    <!-- Canonical (replace with your live domain) -->
+    <link rel="canonical" href="https://srafelagi.et/">
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Srafelagi — Jobs in Addis Ababa & Ethiopia">
+    <meta property="og:description" content="All Ethiopian job boards and channels in one place. Srafelagi, GeezJobs, Afriwork and more. Updated daily.">
+    <meta property="og:url" content="https://srafelagi.et/">
+    <meta property="og:image" content="https://srafelagi.et/images/og-image.png">
+    <meta property="og:locale" content="en_US">
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Srafelagi — Jobs in Addis Ababa & Ethiopia">
+    <meta name="twitter:description" content="All Ethiopian job boards and channels in one place. Srafelagi, GeezJobs, Afriwork and more. Updated daily.">
+    <meta name="twitter:image" content="https://srafelagi.et/images/og-image.png">
+    
+    <!-- Fonts: editorial headline + clean body -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇪🇹</text></svg>">
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#047857">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Srafelagi">
+
+    <link rel="stylesheet" href="css/style.css">
+
+    <!-- Google Analytics — replace G-XXXXXXXXXX with your real Measurement ID from analytics.google.com -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-XXXXXXXXXX');
+    </script>
+</head>
+<body>
+    <a href="#jobs" class="skip-link">Skip to main content</a>
+    <!-- Loader -->
+    <div id="loader" class="loader">
+        <div class="loader-content">
+            <div class="loader-spinner"></div>
+            <p>Loading…</p>
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar" id="navbar">
+        <div class="container">
+            <a href="/" class="logo">
+                <img src="/images/srafelagi.jpg" alt="" class="logo-img">
+                <span class="logo-text">Srafelagi</span>
+            </a>
+            
+            <div class="nav-links" id="navLinks">
+                <a href="#jobs" class="nav-link active">Find Jobs</a>
+                <a href="#categories" class="nav-link">Categories</a>
+                <a href="#about" class="nav-link">About</a>
+                <a href="#stats" class="nav-link">Statistics</a>
+            </div>
+            
+            <div class="nav-actions">
+                <button class="btn btn-outline" id="darkModeToggle" aria-label="Toggle dark mode">
+                    <i class="fas fa-moon"></i>
+                </button>
+                <a href="#jobs" class="btn btn-primary">
+                    <i class="fas fa-search"></i>
+                    <span>Search Jobs</span>
+                </a>
+            </div>
+            
+            <button class="mobile-menu-btn" id="mobileMenuBtn">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-bg">
+            <div class="hero-shape hero-shape-1"></div>
+            <div class="hero-shape hero-shape-2"></div>
+            <div class="hero-shape hero-shape-3"></div>
+        </div>
+        
+        <div class="container">
+            <div class="hero-content">
+                <p class="hero-eyebrow">All Ethiopian job boards and channels in one place</p>
+                <h1 class="hero-title">
+                    Jobs in Addis Ababa<br>
+                    <span class="hero-title-accent">and across Ethiopia</span>
+                </h1>
+                <p class="hero-subtitle">
+                    Updated from Srafelagi, GeezJobs, Afriwork and 7+ Telegram channels. Search by role or city.
+                </p>
+                <p class="hero-count"><span id="liveJobCount">—</span> jobs available</p>
+                
+                <!-- Search Box -->
+                <div class="search-box">
+                    <div class="search-input-wrapper">
+                        <i class="fas fa-search"></i>
+                        <input type="text" id="heroSearch" placeholder="Job title, company, or keywords..." aria-label="Search jobs by title, company, or keywords">
+                    </div>
+                    <div class="search-select-wrapper">
+                        <i class="fas fa-map-marker-alt"></i>
+                        <select id="heroLocation">
+                            <option value="">All Locations</option>
+                            <option value="Addis Ababa">Addis Ababa</option>
+                            <option value="Dire Dawa">Dire Dawa</option>
+                            <option value="Bahir Dar">Bahir Dar</option>
+                            <option value="Hawassa">Hawassa</option>
+                            <option value="Mekelle">Mekelle</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary btn-lg" id="heroSearchBtn" type="button" aria-label="Search jobs">
+                        <i class="fas fa-search"></i>
+                        Search Jobs
+                    </button>
+                </div>
+                
+                <div class="popular-searches">
+                    <span>Try:</span>
+                    <button class="tag" data-search="accountant">Accountant</button>
+                    <button class="tag" data-search="developer">Developer</button>
+                    <button class="tag" data-search="nurse">Nurse</button>
+                    <button class="tag" data-search="driver">Driver</button>
+                    <button class="tag" data-search="fresh graduate">Fresh Graduate</button>
+                </div>
+
+                <div class="sources-ticker-wrap" aria-label="Job sources">
+                    <p class="sources-ticker-label">Jobs on this site are collected from these Telegram channels:</p>
+                    <div class="sources-ticker">
+                        <div class="sources-ticker-inner">
+                            <span class="ticker-item"><img src="/images/channels/effoyjobs.jpg" alt="" class="ticker-avatar" width="28" height="28" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="ticker-avatar-fallback" style="display:none;">E</span>@effoyjobs</span>
+                            <span class="ticker-item"><img src="/images/channels/informationnegari.jpg" alt="" class="ticker-avatar" width="28" height="28" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="ticker-avatar-fallback" style="display:none;">I</span>@informationnegari</span>
+                            <span class="ticker-item"><img src="/images/channels/elelanajobs.jpg" alt="" class="ticker-avatar" width="28" height="28" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="ticker-avatar-fallback" style="display:none;">E</span>@elelanajobs</span>
+                            <span class="ticker-item"><img src="/images/channels/freelance_ethio.jpg" alt="" class="ticker-avatar" width="28" height="28" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="ticker-avatar-fallback" style="display:none;">F</span>@freelance_ethio</span>
+                            <span class="ticker-item"><img src="/images/channels/geezjobs_ethiopia.jpg" alt="" class="ticker-avatar" width="28" height="28" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="ticker-avatar-fallback" style="display:none;">G</span>@geezjobs_ethiopia</span>
+                            <span class="ticker-item"><img src="/images/channels/hahujobs.jpg" alt="" class="ticker-avatar" width="28" height="28" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="ticker-avatar-fallback" style="display:none;">H</span>@hahujobs</span>
+                            <span class="ticker-item"><img src="/images/channels/addis_zemen_vacancy.jpg" alt="" class="ticker-avatar" width="28" height="28" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="ticker-avatar-fallback" style="display:none;">A</span>@addis_zemen_vacancy</span>
+                            <span class="ticker-item"><img src="/images/channels/effoyjobs.jpg" alt="" class="ticker-avatar" width="28" height="28" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="ticker-avatar-fallback" style="display:none;">E</span>@effoyjobs</span>
+                            <span class="ticker-item"><img src="/images/channels/geezjobs_ethiopia.jpg" alt="" class="ticker-avatar" width="28" height="28" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="ticker-avatar-fallback" style="display:none;">G</span>@geezjobs_ethiopia</span>
+                            <span class="ticker-item"><img src="/images/channels/hahujobs.jpg" alt="" class="ticker-avatar" width="28" height="28" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="ticker-avatar-fallback" style="display:none;">H</span>@hahujobs</span>
+                            <span class="ticker-item"><img src="/images/channels/addis_zemen_vacancy.jpg" alt="" class="ticker-avatar" width="28" height="28" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"><span class="ticker-avatar-fallback" style="display:none;">A</span>@addis_zemen_vacancy</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="hero-stats">
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-briefcase"></i>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-number" id="statTotalJobs">0</span>
+                        <span class="stat-label">Active Jobs</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-building"></i>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-number" id="statCompanies">0</span>
+                        <span class="stat-label">Companies</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-clock"></i>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-number" id="statToday">0</span>
+                        <span class="stat-label">Posted Today</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-graduation-cap"></i>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-number" id="statFreshGrad">0</span>
+                        <span class="stat-label">Fresh Graduate</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Scroll Indicator -->
+        <div class="scroll-indicator">
+            <div class="mouse">
+                <div class="wheel"></div>
+            </div>
+            <span>Scroll to explore</span>
+        </div>
+    </section>
+
+    <!-- Categories Section -->
+    <section class="categories-section" id="categories">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">Categories</h2>
+                <p class="section-subtitle">Filter by field</p>
+            </div>
+            
+            <div class="categories-grid" id="categoriesGrid">
+                <!-- Categories loaded dynamically -->
+            </div>
+            <p class="categories-note">Total is unique jobs; a job can appear in more than one category.</p>
+        </div>
+    </section>
+
+    <!-- Jobs Section -->
+    <section class="jobs-section" id="jobs">
+        <div class="container">
+            <div class="section-header section-header-jobs">
+                <h2 class="section-title">Latest jobs</h2>
+                <p class="section-subtitle">New posts added daily</p>
+            </div>
+            
+            <!-- Filters -->
+            <div class="filters-bar">
+                <div class="filter-tabs">
+                    <button class="filter-tab active" data-filter="all">All</button>
+                    <button class="filter-tab" data-filter="saved">Saved</button>
+                    <button class="filter-tab" data-filter="fresh_graduate">Fresh Graduate</button>
+                    <button class="filter-tab" data-filter="it">IT & Tech</button>
+                    <button class="filter-tab" data-filter="finance">Finance</button>
+                    <button class="filter-tab" data-filter="banking">Banking</button>
+                    <button class="filter-tab" data-filter="engineering">Engineering</button>
+                    <button class="filter-tab" data-filter="health">Healthcare</button>
+                    <button class="filter-tab" data-filter="ngo">NGO</button>
+                    <button class="filter-tab" data-filter="teaching">Teaching</button>
+                    <button class="filter-tab" data-filter="marketing">Marketing</button>
+                    <button class="filter-tab" data-filter="government">Government</button>
+                    <button class="filter-tab" data-filter="admin">Admin</button>
+                    <button class="filter-tab" data-filter="hr">HR</button>
+                    <button class="filter-tab" data-filter="logistics">Logistics</button>
+                    <button class="filter-tab" data-filter="expiring_today">Expiring today</button>
+                    <button class="filter-tab" data-filter="expiring_tomorrow">Expiring tomorrow</button>
+                    <button class="filter-tab" data-filter="expiring_week">Expiring this week</button>
+                </div>
+                
+                <div class="filter-actions">
+                    <select id="salarySelect" class="filter-select" aria-label="Minimum salary">
+                        <option value="0">Any salary</option>
+                        <option value="5000">5,000+ ETB</option>
+                        <option value="10000">10,000+ ETB</option>
+                        <option value="15000">15,000+ ETB</option>
+                        <option value="20000">20,000+ ETB</option>
+                        <option value="30000">30,000+ ETB</option>
+                        <option value="50000">50,000+ ETB</option>
+                    </select>
+                    <select id="sortSelect" class="filter-select">
+                        <option value="newest">Newest First</option>
+                        <option value="deadline">Deadline Soon</option>
+                    </select>
+                </div>
+            </div>
+            
+            <p class="jobs-freshness" id="jobsFreshness" aria-live="polite"></p>
+            
+            <div class="active-filters-chips" id="activeFiltersChips" aria-label="Active filters"></div>
+            
+            <!-- Jobs Grid -->
+            <div class="jobs-grid" id="jobsGrid">
+                <div class="job-card-skeleton"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-company"></div><div class="skeleton skeleton-meta"></div><div class="skeleton skeleton-preview"></div><div class="skeleton skeleton-preview"></div></div>
+                <div class="job-card-skeleton"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-company"></div><div class="skeleton skeleton-meta"></div><div class="skeleton skeleton-preview"></div><div class="skeleton skeleton-preview"></div></div>
+                <div class="job-card-skeleton"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-company"></div><div class="skeleton skeleton-meta"></div><div class="skeleton skeleton-preview"></div><div class="skeleton skeleton-preview"></div></div>
+                <div class="job-card-skeleton"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-company"></div><div class="skeleton skeleton-meta"></div><div class="skeleton skeleton-preview"></div><div class="skeleton skeleton-preview"></div></div>
+                <div class="job-card-skeleton"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-company"></div><div class="skeleton skeleton-meta"></div><div class="skeleton skeleton-preview"></div><div class="skeleton skeleton-preview"></div></div>
+                <div class="job-card-skeleton"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-company"></div><div class="skeleton skeleton-meta"></div><div class="skeleton skeleton-preview"></div><div class="skeleton skeleton-preview"></div></div>
+            </div>
+            
+            <!-- Load More -->
+            <div class="load-more-wrapper">
+                <button class="btn btn-outline btn-lg" id="loadMoreBtn">
+                    <i class="fas fa-plus"></i>
+                    Load More Jobs
+                </button>
+            </div>
+
+            <!-- Get new jobs by email (after browsing) -->
+            <div class="jobs-section-alerts" id="jobsSectionAlerts">
+                <p class="jobs-alerts-label"><i class="fas fa-envelope"></i> Get new jobs by email</p>
+                <form id="alertsSubscribeForm" class="alerts-form jobs-alerts-form">
+                    <input type="email" id="alertsEmail" placeholder="Your email" required aria-label="Email">
+                    <input type="text" id="alertsKeywords" placeholder="Keywords (optional)" aria-label="Keywords" class="jobs-alerts-keywords">
+                    <select id="alertsFrequency" aria-label="Frequency">
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                    </select>
+                    <button type="submit" class="btn btn-primary">Subscribe</button>
+                </form>
+                <p id="alertsFormMessage" class="alerts-form-message" aria-live="polite"></p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features / About Section -->
+    <section class="features-section" id="about">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">One place for all Ethiopian jobs</h2>
+                <p class="section-subtitle">We aggregate from Telegram channels and job sites so you don’t have to check each one.</p>
+                <div class="how-it-works">
+                    <p>We collect job posts from Srafelagi, GeezJobs, Afriwork and 7+ Telegram channels. This site is <strong>free to use</strong>—we don’t charge. You apply on the original employer or job board site.</p>
+                </div>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <h3>Live from 7+ channels</h3>
+                    <p>Srafelagi, GeezJobs, Afriwork and more. Updated every minute.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Filter by role & city</h3>
+                    <p>Search by keyword, category, and location. Apply in one click.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Deadlines shown</h3>
+                    <p>See when each application closes. No missed opportunities.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats Section -->
+    <section class="stats-section" id="stats">
+        <div class="container">
+            <div class="stats-content">
+                <div class="stats-text">
+                    <h2 class="section-title">Updated daily. Free to use.</h2>
+                    <p>Jobs from Srafelagi, GeezJobs, Afriwork and 7+ Telegram channels. One search, all sources.</p>
+                    <div class="stats-list">
+                        <div class="stats-item"><span>Updated every minute</span></div>
+                        <div class="stats-item"><span>7+ channels monitored</span></div>
+                        <div class="stats-item"><span>Free, no signup required</span></div>
+                    </div>
+                </div>
+                <div class="stats-numbers">
+                    <div class="big-stat">
+                        <span class="big-stat-number" id="bigStatJobs">0</span>
+                        <span class="big-stat-label">Total jobs</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta-section">
+        <div class="container">
+            <div class="cta-content">
+                <h2>Search once. Apply fast.</h2>
+                <a href="#jobs" class="btn btn-white btn-lg">Browse jobs</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-brand">
+                    <a href="/" class="logo">
+                        <img src="/images/srafelagi.jpg" alt="" class="logo-img">
+                        <span class="logo-text">Srafelagi</span>
+                    </a>
+                    <p>All Ethiopian job boards and channels in one place. Updated daily.</p>
+                    <div class="social-links">
+                        <a href="https://t.me/srafelagi" target="_blank" rel="noopener noreferrer" class="social-link" aria-label="Telegram"><i class="fab fa-telegram"></i></a>
+                        <a href="https://www.linkedin.com/company/srafelagi" target="_blank" rel="noopener noreferrer" class="social-link" aria-label="LinkedIn"><i class="fab fa-linkedin"></i></a>
+                        <a href="https://www.facebook.com/srafelagi" target="_blank" rel="noopener noreferrer" class="social-link" aria-label="Facebook"><i class="fab fa-facebook"></i></a>
+                        <a href="https://twitter.com/srafelagi" target="_blank" rel="noopener noreferrer" class="social-link" aria-label="Twitter"><i class="fab fa-twitter"></i></a>
+                    </div>
+                </div>
+                
+                <div class="footer-links">
+                    <h4>Quick Links</h4>
+                    <ul>
+                        <li><a href="#jobs">Browse Jobs</a></li>
+                        <li><a href="#categories">Categories</a></li>
+                        <li><a href="#about">About Us</a></li>
+                        <li><a href="#stats">Statistics</a></li>
+                        <li><a href="/privacy">Privacy Policy</a></li>
+                        <li><a href="mailto:info@srafelagi.et">Contact us</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-links">
+                    <h4>Job Categories</h4>
+                    <ul>
+                        <li><a href="#jobs" data-category="it">IT & Technology</a></li>
+                        <li><a href="#jobs" data-category="finance">Finance & Accounting</a></li>
+                        <li><a href="#jobs" data-category="banking">Banking</a></li>
+                        <li><a href="#jobs" data-category="ngo">NGO & Development</a></li>
+                        <li><a href="#jobs" data-category="fresh_graduate">Fresh Graduate</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-links">
+                    <h4>Contact</h4>
+                    <ul>
+                        <li><i class="fas fa-envelope"></i> <a href="mailto:info@srafelagi.et">info@srafelagi.et</a></li>
+                        <li><i class="fas fa-map-marker-alt"></i> Addis Ababa, Ethiopia</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="footer-bottom">
+                <p>&copy; <span id="footerYear">2025</span> Srafelagi. Made in Ethiopia.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Job Modal -->
+    <div class="modal" id="jobModal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <button class="modal-close" id="modalClose" aria-label="Close"><i class="fas fa-times"></i></button>
+            <div class="modal-body" id="modalBody"><!-- Job details loaded dynamically --></div>
+            <!-- Sticky apply bar (shown when user scrolls in modal) -->
+            <div class="modal-sticky-apply" id="modalStickyApply">
+                <div class="modal-sticky-inner">
+                    <span class="modal-sticky-title" id="modalStickyTitle">—</span>
+                    <div class="modal-sticky-actions" id="modalStickyActions"><!-- actions injected by JS --></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Back to Top -->
+    <button class="back-to-top" id="backToTop" aria-label="Back to top">
+        <i class="fas fa-arrow-up"></i>
+    </button>
+
+    <!-- Job Alerts Onboarding Popup -->
+    <div class="alerts-popup-overlay" id="alertsPopupOverlay" role="dialog" aria-modal="true" aria-labelledby="alertsPopupTitle" hidden>
+        <div class="alerts-popup">
+            <button class="alerts-popup-close" id="alertsPopupClose" aria-label="Close popup">
+                <i class="fas fa-times"></i>
+            </button>
+            <div class="alerts-popup-icon">
+                <i class="fas fa-bell"></i>
+            </div>
+            <h2 class="alerts-popup-title" id="alertsPopupTitle">Never miss a job</h2>
+            <p class="alerts-popup-desc">Get new Ethiopian jobs straight to your inbox. Free, no spam, unsubscribe anytime.</p>
+            <form id="alertsPopupForm" class="alerts-popup-form" novalidate>
+                <input type="email" id="alertsPopupEmail" placeholder="your@email.com" required autocomplete="email" aria-label="Email address">
+                <input type="text" id="alertsPopupKeywords" placeholder="Keywords, e.g. Accountant, NGO" aria-label="Job keywords (optional)">
+                <select id="alertsPopupFrequency" aria-label="How often to receive alerts">
+                    <option value="daily">Daily digest</option>
+                    <option value="weekly">Weekly roundup</option>
+                    <option value="instant">As jobs are posted</option>
+                </select>
+                <button type="submit" class="btn btn-primary btn-block">
+                    <i class="fas fa-bell"></i> Get job alerts
+                </button>
+            </form>
+            <p id="alertsPopupMessage" class="alerts-form-message" aria-live="polite"></p>
+            <button class="alerts-popup-skip" id="alertsPopupSkip">Maybe later</button>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/assistant.js"></script>
+</body>
+</html>

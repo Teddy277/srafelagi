@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manage Jobs — Srafelagi Admin</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+    <nav class="admin-nav">
+        <div class="admin-nav-content">
+            <a href="/" class="admin-logo"><img src="/images/srafelagi.jpg" alt="" class="admin-logo-img"> Srafelagi Admin</a>
+            <div class="admin-nav-links">
+                <a href="dashboard.html"><i class="fas fa-chart-line"></i> Dashboard</a>
+                <a href="jobs.html" class="active"><i class="fas fa-briefcase"></i> Jobs</a>
+                <a href="#" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</a>
+            </div>
+        </div>
+    </nav>
+    <main class="admin-main">
+        <div class="admin-container">
+            <div class="admin-header">
+                <h1>Manage Jobs</h1>
+                <div class="admin-search">
+                    <input type="text" id="searchInput" placeholder="Search jobs..." onkeyup="debounceSearch()">
+                    <button class="btn btn-primary" onclick="loadJobs()"><i class="fas fa-search"></i></button>
+                </div>
+            </div>
+            <div class="jobs-table-wrapper">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Title</th>
+                            <th>Company</th>
+                            <th>Location</th>
+                            <th>Deadline</th>
+                            <th>Applies</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="jobsTableBody">
+                        <tr><td colspan="7" style="text-align:center;padding:2rem;">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination" id="pagination"></div>
+        </div>
+    </main>
+    <div id="editModal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <span class="close" onclick="closeEditModal()">&times;</span>
+            <h2>Edit Job</h2>
+            <p id="editModalApplyCount" class="edit-meta" style="margin-bottom:1rem;color:var(--text-muted, #666);font-size:0.9rem;"></p>
+            <form id="editForm">
+                <input type="hidden" id="editJobId">
+                <div class="form-group">
+                    <label>Title</label>
+                    <input type="text" id="editTitle" required>
+                </div>
+                <div class="form-group">
+                    <label>Company</label>
+                    <input type="text" id="editCompany">
+                </div>
+                <div class="form-group">
+                    <label>Location</label>
+                    <input type="text" id="editLocation">
+                </div>
+                <div class="form-group">
+                    <label>Deadline</label>
+                    <input type="text" id="editDeadline" placeholder="e.g. February 15, 2026">
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="editDescription" rows="6"></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Save</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script src="admin.js"></script>
+    <script>
+        const API_BASE = resolveApiBase();
+        let currentPage = 1;
+        let searchQuery = '';
+        function getAuthHeaders() {
+            return {'Authorization': `Bearer ${localStorage.getItem('admin_token')}`};
+        }
+        function checkAuth() {
+            if (!localStorage.getItem('admin_token')) {
+                window.location.href = API_BASE + '/admin/login.html';
+            }
+        }
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = API_BASE + '/admin/login.html';
+        }
+        async function loadJobs(page = 1) {
+            checkAuth();
+            currentPage = page;
+            searchQuery = document.getElementById('searchInput').value;
+            try {
+                let url = API_BASE + `/api/admin/jobs?page=${page}&per_page=50`;
+                if (searchQuery) url += `&search=${encodeURIComponent(searchQuery)}`;
+                const res = await fetch(url, {headers: getAuthHeaders()});
+                if (res.status === 401) {
+                    window.location.href = API_BASE + '/admin/login.html';
+                    return;
+                }
+                const data = await res.json();
+                renderJobs(data.jobs || []);
+                renderPagination(data.page, data.pages);
+            } catch (e) {
+                document.getElementById('jobsTableBody').innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:#dc2626;">Error loading jobs</td></tr>';
+            }
+        }
+        function renderJobs(jobs) {
+            const tbody = document.getElementById('jobsTableBody');
+            if (jobs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;">No jobs found</td></tr>';
+                return;
+            }
+            tbody.innerHTML = jobs.map(job => `
+                <tr>
+                    <td>${job.id}</td>
+                    <td>${escapeHtml(job.title || 'Untitled')}</td>
+                    <td>${escapeHtml(job.company || '—')}</td>
+                    <td>${escapeHtml(job.location || '—')}</td>
+                    <td>${escapeHtml(job.deadline || job.deadline_text || '—')}</td>
+                    <td>${typeof job.apply_count === 'number' ? job.apply_count : '—'}</td>
+                    <td>
+                        <button class="btn-small btn-primary" onclick="editJob(${job.id})"><i class="fas fa-edit"></i></button>
+                        <button class="btn-small btn-danger" onclick="deleteJob(${job.id})"><i class="fas fa-trash"></i></button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        function renderPagination(page, pages) {
+            const pagination = document.getElementById('pagination');
+            if (pages <= 1) {
+                pagination.innerHTML = '';
+                return;
+            }
+            let html = '';
+            if (page > 1) html += `<button onclick="loadJobs(${page-1})">Previous</button>`;
+            html += `<span>Page ${page} of ${pages}</span>`;
+            if (page < pages) html += `<button onclick="loadJobs(${page+1})">Next</button>`;
+            pagination.innerHTML = html;
+        }
+        async function editJob(id) {
+            checkAuth();
+            try {
+                const res = await fetch(API_BASE + `/api/admin/jobs/${id}`, {headers: getAuthHeaders()});
+                if (res.status === 401) {
+                    window.location.href = API_BASE + '/admin/login.html';
+                    return;
+                }
+                const job = await res.json();
+                document.getElementById('editJobId').value = job.id;
+                document.getElementById('editTitle').value = job.title || '';
+                document.getElementById('editCompany').value = job.company || '';
+                document.getElementById('editLocation').value = job.location || '';
+                document.getElementById('editDeadline').value = job.deadline || job.deadline_text || '';
+                document.getElementById('editDescription').value = job.description || '';
+                const applyEl = document.getElementById('editModalApplyCount');
+                const n = typeof job.apply_count === 'number' ? job.apply_count : 0;
+                applyEl.textContent = n === 0 ? 'No apply clicks yet' : `${n} apply click${n === 1 ? '' : 's'}`;
+                document.getElementById('editModal').style.display = 'block';
+            } catch (e) {
+                alert('Failed to load job: ' + e.message);
+            }
+        }
+        function closeEditModal() {
+            document.getElementById('editModal').style.display = 'none';
+        }
+        document.getElementById('editForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('editJobId').value;
+            const jobData = {
+                title: document.getElementById('editTitle').value,
+                company: document.getElementById('editCompany').value,
+                location: document.getElementById('editLocation').value,
+                deadline: document.getElementById('editDeadline').value,
+                description: document.getElementById('editDescription').value,
+            };
+            try {
+                const res = await fetch(API_BASE + `/api/admin/jobs/${id}`, {
+                    method: 'PUT',
+                    headers: {...getAuthHeaders(), 'Content-Type': 'application/json'},
+                    body: JSON.stringify(jobData)
+                });
+                if (res.ok) {
+                    alert('Job updated successfully');
+                    closeEditModal();
+                    loadJobs(currentPage);
+                } else {
+                    alert('Failed to update job');
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        });
+        async function deleteJob(id) {
+            if (!confirm(`Delete job #${id}? This cannot be undone.`)) return;
+            checkAuth();
+            try {
+                const res = await fetch(API_BASE + `/api/admin/jobs/${id}`, {
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
+                });
+                if (res.status === 401) {
+                    window.location.href = API_BASE + '/admin/login.html';
+                    return;
+                }
+                if (res.ok) {
+                    alert('Job deleted');
+                    loadJobs(currentPage);
+                } else {
+                    alert('Failed to delete job');
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+        let searchTimeout;
+        function debounceSearch() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => loadJobs(1), 500);
+        }
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        window.onclick = function(event) {
+            const modal = document.getElementById('editModal');
+            if (event.target === modal) closeEditModal();
+        }
+        checkAuth();
+        loadJobs();
+    </script>
+</body>
+</html>

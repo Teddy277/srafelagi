@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where py *)",
+      "Bash(where pip *)",
+      "Bash(dir \"C:\\\\Python*\")",
+      "Bash(dir \"C:\\\\Users\\\\Tedros.tigabu\\\\AppData\\\\Local\\\\Programs\\\\Python\")",
+      "Bash(py -3 --version)",
+      "Bash(py --version)",
+      "Bash(\"C:\\\\Program Files\\\\Python311\\\\python.exe\" --version)",
+      "Bash(\"C:\\\\Program Files\\\\Python312\\\\python.exe\" --version)",
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" --version)",
+      "Bash(Select-String -Path \"C:\\\\Users\\\\Tedros.tigabu\\\\Downloads\\\\srafelagi\\\\srafelagi\\\\frontend\\\\js\\\\app.js\" -Pattern \"initAlertsOnboarding|initAlerts|initFooter\" -n)",
+      "Bash(Select-Object -Last 30)",
+      "PowerShell(py *)",
+      "Bash(pip --version)",
+      "PowerShell(pip *)",
+      "PowerShell(python -m pip --version; python -m pip list 2>&1 | Select-Object -First 5)",
+      "PowerShell(python -m pip list 2>&1)",
+      "PowerShell(python -m pip install -r \"C:\\\\Users\\\\Tedros.tigabu\\\\Downloads\\\\srafelagi\\\\srafelagi\\\\requirements.txt\" 2>&1)",
+      "PowerShell(python -m pip install psycopg2-binary 2>&1 | Select-Object -Last 5)",
+      "PowerShell(python -m pip install \"telethon==1.34.0\" \"aiohttp==3.9.1\" \"beautifulsoup4==4.12.2\" \"lxml==5.1.0\" \"fastapi==0.109.0\" \"uvicorn==0.27.0\" \"python-dateutil==2.8.2\" \"pydantic==2.5.3\" \"python-dotenv==1.2.1\" \"requests>=2.31.0,<3\" 2>&1 | Select-Object -Last 8)",
+      "Bash(pip install *)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import bcrypt; h = bcrypt.hashpw\\(b'admin123', bcrypt.gensalt\\(\\)\\).decode\\(\\); print\\(h\\)\")",
+      "Bash(findstr -i \"render\\\\|procfile\\\\|railway\\\\|heroku\\\\|docker\")",
+      "Bash(python -c \"import PyPDF2; import multipart; print\\('OK'\\)\")",
+      "Bash(Get-Item \"C:\\\\Users\\\\Tedros.tigabu\\\\Downloads\\\\srafelagi\\\\srafelagi\\\\frontend\\\\css\\\\style.css\")",
+      "Bash(Select-Object Length)",
+      "Bash(python api.py)",
+      "Bash(curl -s http://localhost:8001/health)",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(curl -s http://localhost:8001/)",
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(python *)",
+      "Bash(pkill -f \"python api.py\")",
+      "Bash(HOST=0.0.0.0 PORT=8001 python api.py)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git -c user.name=\"Teddy\" -c user.email=\"tedaman29@gmail.com\" commit -m \"Initial release — Srafelagi Ethiopian job board\")"
+    ]
+  }
+}
