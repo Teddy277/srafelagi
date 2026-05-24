@@ -750,6 +750,16 @@ def build_job_data(
         final_deadline = tg.get('deadline')
     if not final_deadline and tg_parsed:
         final_deadline = getattr(tg_parsed, 'deadline', None)
+    # Last resort: regex scan of raw Telegram text
+    if not final_deadline and raw_text:
+        for _pat in [
+            r'(?:deadline|closing\s*date|apply\s*before|ends?)[:\s]+([^\n]{3,80})',
+            r'(?:last\s+date|due\s+date)[:\s]+([^\n]{3,80})',
+        ]:
+            _m = re.search(_pat, raw_text, re.IGNORECASE)
+            if _m:
+                final_deadline = _m.group(1).strip()
+                break
 
     # Salary
     if not salary:
@@ -1090,6 +1100,17 @@ async def process_raw_text(
     description = clean_telegram_text(text)
     if len(description) < 30:
         return
+
+    # Fallback deadline: parse_telegram_message can miss some formats — re-extract from raw text
+    if not deadline:
+        for _pat in [
+            r'(?:deadline|closing\s*date|apply\s*before|ends?)[:\s]+([^\n]{3,80})',
+            r'(?:last\s+date|due\s+date)[:\s]+([^\n]{3,80})',
+        ]:
+            _m = re.search(_pat, text, re.IGNORECASE)
+            if _m:
+                deadline = _m.group(1).strip()
+                break
 
     apply_email = extract_email_from_text(text)
     salary = extract_salary_from_text(text)
