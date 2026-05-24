@@ -183,6 +183,7 @@ async def startup():
     logger.info("Database ready")
     import asyncio
     asyncio.create_task(_schedule_daily_digest())
+    asyncio.create_task(_schedule_expired_cleanup())
 
 
 async def _schedule_daily_digest():
@@ -205,6 +206,58 @@ async def _schedule_daily_digest():
             logger.info("Daily digest done. Sent: %s", sent)
         except Exception as e:
             logger.error("Daily digest failed: %s", e)
+
+
+async def _schedule_expired_cleanup():
+    """Delete expired jobs every night at 02:00 UTC.
+    Only removes jobs whose deadline has passed. Jobs with no deadline
+    are removed after 60 days so the DB stays lean.
+    """
+    import asyncio
+    from datetime import datetime, timedelta
+
+    while True:
+        now = datetime.utcnow()
+        next_run = now.replace(hour=2, minute=0, second=0, microsecond=0)
+        if now >= next_run:
+            next_run += timedelta(days=1)
+        wait = (next_run - now).total_seconds()
+        logger.info("Next expired-job cleanup at %s UTC (in %.0f s)", next_run.strftime("%Y-%m-%d %H:%M"), wait)
+        await asyncio.sleep(wait)
+        try:
+            # Delete jobs whose deadline has passed
+            expired = db.delete_expired_jobs()
+            # Also delete jobs with no deadline that are older than 60 days
+            no_deadline_old = _delete_old_no_deadline_jobs(days=60)
+            logger.info("Cleanup done — expired: %d, no-deadline older than 60d: %d", expired, no_deadline_old)
+        except Exception as e:
+            logger.error("Expired job cleanup failed: %s", e)
+
+
+def _delete_old_no_deadline_jobs(days: int = 60) -> int:
+    """Delete jobs that have no deadline and were scraped more than `days` days ago."""
+    try:
+        db._ensure_connection()
+        with db.conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM jobs
+                WHERE (deadline_text IS NULL OR deadline_text = '')
+                  AND created_at < NOW() - INTERVAL '%s days'
+                """,
+                (days,),
+            )
+            count = cur.rowcount
+        db.conn.commit()
+        return count
+    except Exception as e:
+        logger.error("Failed to delete old no-deadline jobs: %s", e)
+        try:
+            db.conn.rollback()
+        except Exception:
+            pass
+        return 0
+
 
 # ============ API ROUTES ============
 
