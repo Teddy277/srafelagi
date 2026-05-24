@@ -183,11 +183,21 @@ def _jobs_base_where(
     conditions = ["1=1"]
     params = []
     if search:
-        conditions.append(
-            "(title ILIKE %s OR company ILIKE %s OR description ILIKE %s)"
-        )
-        search_term = f"%{search}%"
-        params.extend([search_term, search_term, search_term])
+        words = search.strip().split()
+        if len(words) >= 2:
+            # Full-text search for multi-word queries (fast GIN index)
+            # Falls back to ILIKE if search_vector not yet populated
+            conditions.append(
+                "(search_vector @@ plainto_tsquery('simple', %s)"
+                " OR title ILIKE %s OR company ILIKE %s)"
+            )
+            params.extend([search, f"%{search}%", f"%{search}%"])
+        else:
+            conditions.append(
+                "(title ILIKE %s OR company ILIKE %s OR description ILIKE %s)"
+            )
+            search_term = f"%{search}%"
+            params.extend([search_term, search_term, search_term])
     cat_slug = (category or "").strip().lower() if isinstance(category, str) else ""
     if cat_slug:
         cat_sql, cat_params = _category_condition(cat_slug)
@@ -498,6 +508,66 @@ class Database:
                     except Exception:
                         self.conn.rollback()
 
+                # ── Full-text search: tsvector column + GIN index + trigger ──
+                if 'search_vector' not in existing:
+                    try:
+                        cur.execute("ALTER TABLE jobs ADD COLUMN search_vector tsvector;")
+                        logger.info("Added column: search_vector")
+                    except Exception:
+                        self.conn.rollback()
+
+                if 'idx_jobs_search_vector_gin' not in existing_indexes:
+                    try:
+                        cur.execute("""
+                            CREATE INDEX idx_jobs_search_vector_gin
+                            ON jobs USING GIN(search_vector);
+                        """)
+                        logger.info("Created GIN index: idx_jobs_search_vector_gin")
+                    except Exception:
+                        self.conn.rollback()
+
+                # Trigger to auto-update search_vector on insert/update
+                try:
+                    cur.execute("""
+                        CREATE OR REPLACE FUNCTION jobs_search_vector_update()
+                        RETURNS TRIGGER AS $$
+                        BEGIN
+                            NEW.search_vector := to_tsvector('simple',
+                                coalesce(NEW.title, '') || ' ' ||
+                                coalesce(NEW.company, '') || ' ' ||
+                                coalesce(substring(NEW.description, 1, 1000), '')
+                            );
+                            RETURN NEW;
+                        END;
+                        $$ LANGUAGE plpgsql;
+                    """)
+                    cur.execute("""
+                        DROP TRIGGER IF EXISTS trg_jobs_search_vector ON jobs;
+                        CREATE TRIGGER trg_jobs_search_vector
+                        BEFORE INSERT OR UPDATE OF title, company, description ON jobs
+                        FOR EACH ROW EXECUTE FUNCTION jobs_search_vector_update();
+                    """)
+                    logger.info("search_vector trigger ready")
+                except Exception as e:
+                    logger.warning("Could not create search_vector trigger: %s", e)
+                    self.conn.rollback()
+
+                # Backfill existing rows (up to 2000 at startup, rest handled by trigger)
+                try:
+                    cur.execute("""
+                        UPDATE jobs SET search_vector = to_tsvector('simple',
+                            coalesce(title, '') || ' ' ||
+                            coalesce(company, '') || ' ' ||
+                            coalesce(substring(description, 1, 1000), '')
+                        )
+                        WHERE search_vector IS NULL
+                        LIMIT 2000;
+                    """)
+                    logger.info("Backfilled search_vector for up to 2000 rows")
+                except Exception as e:
+                    logger.warning("search_vector backfill skipped: %s", e)
+                    self.conn.rollback()
+
             self.conn.commit()
             logger.info("Database schema ready")
 
@@ -596,37 +666,36 @@ class Database:
                             return dict(row)
 
             # Strategy 2: Check by normalized title + company similarity
+            # Only within 30 days to allow re-posts of genuinely new openings
             if title and company:
                 normalized_title = normalize_text(title)
                 normalized_company = normalize_text(company)
 
                 if normalized_title and normalized_company:
                     with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-                        # Get recent jobs with similar title/company
                         cur.execute(
                             """SELECT id, source_url, title, company, description, telegram_id, telegram_channel,
                                       title_normalized, company_normalized
                                FROM jobs
-                               WHERE title_normalized = %s OR title ILIKE %s
+                               WHERE (title_normalized = %s OR title ILIKE %s)
+                                 AND created_at > NOW() - INTERVAL '30 days'
                                ORDER BY created_at DESC
-                               LIMIT 20""",
+                               LIMIT 30""",
                             (normalized_title, f"%{normalized_title}%")
                         )
                         rows = cur.fetchall()
 
                         for row in rows:
-                            # Check company similarity
                             row_company_norm = row.get('company_normalized') or normalize_text(row.get('company', ''))
                             if row_company_norm:
                                 company_sim = calculate_job_similarity(
                                     company, None, row.get('company', ''), None
                                 )
-                                if company_sim >= 0.8:  # Company must be very similar
-                                    # Check title similarity
+                                if company_sim >= 0.75:
                                     title_sim = calculate_job_similarity(
                                         title, None, row.get('title', ''), None
                                     )
-                                    if title_sim >= similarity_threshold:
+                                    if title_sim >= 0.78:
                                         logger.debug(f"Duplicate found by title+company similarity: {title[:60]}...")
                                         return dict(row)
 
