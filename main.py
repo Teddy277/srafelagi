@@ -744,12 +744,16 @@ def build_job_data(
     if not final_location and tg_parsed:
         final_location = getattr(tg_parsed, 'location', None)
 
-    # Deadline
-    final_deadline = scraped_deadline
+    # Deadline — skip empty/colon-only values so fallbacks can run
+    def _looks_like_deadline(v):
+        return bool(v and len(str(v).strip()) > 3 and re.search(r'\d', str(v)))
+
+    final_deadline = scraped_deadline if _looks_like_deadline(scraped_deadline) else None
     if not final_deadline:
-        final_deadline = tg.get('deadline')
+        final_deadline = tg.get('deadline') if _looks_like_deadline(tg.get('deadline')) else None
     if not final_deadline and tg_parsed:
-        final_deadline = getattr(tg_parsed, 'deadline', None)
+        _td = getattr(tg_parsed, 'deadline', None)
+        final_deadline = _td if _looks_like_deadline(_td) else None
     # Last resort: regex scan of raw Telegram text
     if not final_deadline and raw_text:
         for _pat in [

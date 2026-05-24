@@ -152,13 +152,13 @@ class HahuJobsScraper(BaseScraper):
             full = tag.get_text(strip=True)
             if full.lower().startswith("deadline:"):
                 val = full.split(":", 1)[-1].strip()
-                if val and len(val) < 80 and "share" not in val.lower():
+                if val and len(val) > 3 and "share" not in val.lower() and re.search(r'\d', val):
                     return val
         for tag in soup.find_all(["strong", "b", "span", "h5", "h6"]):
             label = tag.get_text(strip=True).lower().rstrip(":")
             if label == "deadline":
                 val = self._text_after_label(tag)
-                if val and len(val) < 80 and "share" not in val.lower():
+                if val and len(val) > 3 and "share" not in val.lower() and re.search(r'\d', val):
                     return val
         return None
 
