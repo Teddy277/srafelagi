@@ -13,18 +13,19 @@ logger = logging.getLogger(__name__)
 _ollama = None
 _groq = None
 _gemini = None
+_cerebras = None
 
 def get_provider(name: str):
     """
     Get an AI provider by name.
 
     Args:
-        name: Provider name ('ollama', 'groq', 'gemini')
+        name: Provider name ('ollama', 'groq', 'gemini', 'cerebras')
 
     Returns:
         Provider class or None if not available
     """
-    global _ollama, _groq, _gemini
+    global _ollama, _groq, _gemini, _cerebras
 
     name = name.lower().strip()
 
@@ -57,6 +58,16 @@ def get_provider(name: str):
                 return None
             _gemini = _gemini_module
         return _gemini.GeminiProvider()
+
+    elif name == 'cerebras':
+        if _cerebras is None:
+            try:
+                from . import cerebras as _cerebras_module
+            except ImportError as e:
+                logger.warning("Cerebras provider unavailable: %s", e)
+                return None
+            _cerebras = _cerebras_module
+        return _cerebras.CerebrasProvider()
 
     else:
         logger.warning(f"Unknown AI provider: {name}")
