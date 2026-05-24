@@ -63,6 +63,11 @@ class CerebrasProvider(BaseAIProvider):
         self._key_index += 1
         return key
 
+    @staticmethod
+    def _contains_amharic(text: str) -> bool:
+        """Return True if text contains Ethiopic script (Amharic/Tigrinya)."""
+        return any('ሀ' <= ch <= '፿' for ch in (text or ""))
+
     def normalize_job_text(
         self,
         title: Optional[str] = None,
@@ -76,6 +81,12 @@ class CerebrasProvider(BaseAIProvider):
         }
         if not self.is_available() or not (title or company or description):
             return out
+
+        # Cerebras models can't handle Ethiopic script — skip so Gemini takes over
+        combined = f"{title or ''} {description or ''}"
+        if self._contains_amharic(combined):
+            logger.info("Cerebras skipping Amharic content — will fall through to Gemini")
+            raise ValueError("Amharic content not supported by Cerebras; falling back")
 
         prompt = NORMALIZE_PROMPT.format(
             title=title or "Not provided",
