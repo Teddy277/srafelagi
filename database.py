@@ -183,21 +183,14 @@ def _jobs_base_where(
     conditions = ["1=1"]
     params = []
     if search:
-        words = search.strip().split()
-        if len(words) >= 2:
-            # Full-text search for multi-word queries (fast GIN index)
-            # Falls back to ILIKE if search_vector not yet populated
-            conditions.append(
-                "(search_vector @@ plainto_tsquery('simple', %s)"
-                " OR title ILIKE %s OR company ILIKE %s)"
-            )
-            params.extend([search, f"%{search}%", f"%{search}%"])
-        else:
-            conditions.append(
-                "(title ILIKE %s OR company ILIKE %s OR description ILIKE %s)"
-            )
-            search_term = f"%{search}%"
-            params.extend([search_term, search_term, search_term])
+        # Always use full-text search — plainto_tsquery matches whole tokens only,
+        # so "ERP" never matches "interpersonal" or "enterprise".
+        # ILIKE on title/company is a fallback for rows not yet indexed.
+        conditions.append(
+            "(search_vector @@ plainto_tsquery('simple', %s)"
+            " OR title ILIKE %s OR company ILIKE %s)"
+        )
+        params.extend([search, f"%{search}%", f"%{search}%"])
     cat_slug = (category or "").strip().lower() if isinstance(category, str) else ""
     if cat_slug:
         cat_sql, cat_params = _category_condition(cat_slug)
