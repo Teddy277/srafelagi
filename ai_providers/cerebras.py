@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 _raw_keys = os.getenv("CEREBRAS_API_KEYS", os.getenv("CEREBRAS_API_KEY", "")).strip()
 _CEREBRAS_KEYS = [k.strip() for k in _raw_keys.split(",") if k.strip()]
-DEFAULT_MODEL = os.getenv("CEREBRAS_MODEL", "llama-3.3-70b")
+DEFAULT_MODEL = os.getenv("CEREBRAS_MODEL", "llama3.1-8b")
 CEREBRAS_API_URL = "https://api.cerebras.ai/v1/chat/completions"
 
 NORMALIZE_PROMPT = """You are a job board editor. Normalize the following job post so it has a consistent, professional format.
