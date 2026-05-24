@@ -148,7 +148,7 @@ def _pick_server_port(host: str, preferred_port: int) -> tuple[int, bool]:
         return sock.getsockname()[1], True
 
 
-SERVER_HOST = (os.getenv("HOST", "127.0.0.1").strip() or "127.0.0.1")
+SERVER_HOST = (os.getenv("HOST", "0.0.0.0").strip() or "0.0.0.0")
 PREFERRED_PORT = int(os.getenv("PORT", "8000"))
 SERVER_PORT, SERVER_PORT_WAS_FALLBACK = _pick_server_port(SERVER_HOST, PREFERRED_PORT)
 PUBLIC_HOST = (os.getenv("PUBLIC_HOST", "").strip() or _display_host(SERVER_HOST))
