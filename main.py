@@ -201,6 +201,10 @@ def clean_telegram_text(text: str) -> str:
     if not text:
         return text
 
+    # Decode HTML entities (e.g. &amp; → &, &lt; → <) from scraped web content
+    import html as _html
+    text = _html.unescape(text)
+
     text = re.sub(r'```[\s\S]*?```', lambda m: m.group(0).strip('`').strip(), text)
     text = re.sub(r'`([^`]+)`', r'\1', text)
     text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
@@ -214,6 +218,10 @@ def clean_telegram_text(text: str) -> str:
     text = text.replace('\u200d', '')
     text = text.replace('\ufeff', '')
     lines = [line.strip() for line in text.split('\n')]
+    # Remove lines that are purely Telegram hashtags (e.g. #company_name, #location)
+    lines = [l for l in lines if not re.match(r'^(#\w+\s*)+$', l)]
+    # Remove Telegram channel footer lines (e.g. "@hahujobs | @hahujobs_bot")
+    lines = [l for l in lines if not re.match(r'^@\w+(\s*\|\s*@\w+)*\s*$', l)]
     text = '\n'.join(lines)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
