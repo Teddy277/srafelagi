@@ -59,6 +59,8 @@ def parse_deadline_date(text: Optional[str]) -> Optional[date]:
     if not text or not str(text).strip():
         return None
     text = str(text).strip()
+    # Strip ordinal suffixes: 20th → 20, 1st → 1, 2nd → 2, 3rd → 3
+    text = re.sub(r'(\d+)(st|nd|rd|th)\b', r'\1', text, flags=re.IGNORECASE)
     # Try full string first
     for fmt in DEADLINE_DATE_FORMATS:
         try:
