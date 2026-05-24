@@ -1109,11 +1109,28 @@ async def process_raw_text(
                 logger.info(f"  Using button URL as apply link: {u[:60]}...")
                 break
 
-    formatted_description = format_description_with_links(description)
-
     # Normalize fields for duplicate detection
     cleaned_title = clean_telegram_text(title)
     cleaned_company = clean_telegram_text(company) if company else None
+
+    # AI normalization — removes #hashtags, @mentions, and structures the description
+    try:
+        normalized = normalize_job_text(
+            title=cleaned_title,
+            company=cleaned_company,
+            description=description,
+        )
+        if normalized.get("title") and normalized["title"].strip():
+            cleaned_title = normalized["title"]
+        if normalized.get("company") and normalized["company"].strip():
+            cleaned_company = normalized["company"]
+        if normalized.get("description") and len(normalized["description"].strip()) >= 30:
+            description = normalized["description"]
+            logger.info("  AI normalized direct Telegram message")
+    except Exception as e:
+        logger.warning("  AI normalization failed for direct message: %s", e)
+
+    formatted_description = format_description_with_links(description)
     title_normalized = normalize_text(cleaned_title) if cleaned_title else None
     company_normalized = normalize_text(cleaned_company) if cleaned_company else None
     source_url_normalized = normalize_url(source_url) if source_url else None
