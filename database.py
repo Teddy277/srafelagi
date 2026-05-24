@@ -183,14 +183,16 @@ def _jobs_base_where(
     conditions = ["1=1"]
     params = []
     if search:
-        # Always use full-text search — plainto_tsquery matches whole tokens only,
-        # so "ERP" never matches "interpersonal" or "enterprise".
-        # ILIKE on title/company is a fallback for rows not yet indexed.
+        # Word-boundary regex: \y matches at word boundaries in PostgreSQL,
+        # so "ERP" never matches "interpersonal" or "enterprise" — but still
+        # matches "ERP Consultant" or "knowledge of ERP systems".
+        # plainto_tsquery uses GIN index for speed when search_vector is populated.
+        pattern = r'\y' + re.escape(search.strip()) + r'\y'
         conditions.append(
             "(search_vector @@ plainto_tsquery('simple', %s)"
-            " OR title ILIKE %s OR company ILIKE %s)"
+            " OR title ~* %s OR company ~* %s OR description ~* %s)"
         )
-        params.extend([search, f"%{search}%", f"%{search}%"])
+        params.extend([search, pattern, pattern, pattern])
     cat_slug = (category or "").strip().lower() if isinstance(category, str) else ""
     if cat_slug:
         cat_sql, cat_params = _category_condition(cat_slug)
@@ -546,6 +548,7 @@ class Database:
                     self.conn.rollback()
 
                 # Backfill existing rows (up to 2000 at startup, rest handled by trigger)
+                # PostgreSQL doesn't allow LIMIT on UPDATE directly — use subquery
                 try:
                     cur.execute("""
                         UPDATE jobs SET search_vector = to_tsvector('simple',
@@ -553,10 +556,14 @@ class Database:
                             coalesce(company, '') || ' ' ||
                             coalesce(substring(description, 1, 1000), '')
                         )
-                        WHERE search_vector IS NULL
-                        LIMIT 2000;
+                        WHERE id IN (
+                            SELECT id FROM jobs
+                            WHERE search_vector IS NULL
+                            LIMIT 2000
+                        );
                     """)
-                    logger.info("Backfilled search_vector for up to 2000 rows")
+                    rows = cur.rowcount
+                    logger.info("Backfilled search_vector for %d rows", rows)
                 except Exception as e:
                     logger.warning("search_vector backfill skipped: %s", e)
                     self.conn.rollback()
