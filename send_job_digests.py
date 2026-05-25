@@ -2,14 +2,23 @@
 Send job alert digests to confirmed subscribers.
 Run daily via cron, e.g.: 0 9 * * * cd /path/to/project && python send_job_digests.py
 
-Requires .env with DATABASE_URL and optionally SMTP_* for sending email.
+Subscribers via email get an SMTP digest.
+Subscribers via Telegram bot (email shape: tg_<id>@telegram.bot) get a Telegram message.
+
+Requires .env with DATABASE_URL, SMTP_* for email, TELEGRAM_BOT_TOKEN for Telegram.
 """
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 load_dotenv()
+
+try:
+    import requests
+except ImportError:
+    requests = None
 
 from database import Database
 
@@ -24,6 +33,75 @@ if PUBLIC_HOST in {"0.0.0.0", "127.0.0.1", "::", "::1"}:
     PUBLIC_HOST = "localhost"
 DEFAULT_SITE_BASE_URL = f"http://{PUBLIC_HOST}:{int(os.getenv('PORT', '8000'))}"
 SITE_BASE_URL = os.getenv("SITE_BASE_URL", DEFAULT_SITE_BASE_URL).strip().rstrip("/")
+
+# Telegram bot config — for sending digests to bot subscribers
+TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or "").strip()
+TELEGRAM_PSEUDO_EMAIL_RE = re.compile(r"^tg_(\d+)@telegram\.bot$")
+
+
+def is_telegram_subscriber(email: str) -> bool:
+    return bool(email and TELEGRAM_PSEUDO_EMAIL_RE.match(email))
+
+
+def telegram_user_id(email: str):
+    m = TELEGRAM_PSEUDO_EMAIL_RE.match(email or "")
+    return int(m.group(1)) if m else None
+
+
+def send_telegram(user_id: int, text: str) -> bool:
+    """Send a Telegram message to a user via the bot HTTP API."""
+    if not TELEGRAM_BOT_TOKEN or requests is None:
+        print("Telegram bot token not set or requests missing — skipping telegram digest")
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        # Telegram message limit is 4096 chars
+        payload = {
+            "chat_id": user_id,
+            "text": text[:4000],
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+        }
+        r = requests.post(url, json=payload, timeout=15)
+        if r.status_code == 200:
+            return True
+        # Retry without markdown if parse_mode failed
+        if r.status_code == 400:
+            payload.pop("parse_mode", None)
+            r = requests.post(url, json=payload, timeout=15)
+            return r.status_code == 200
+        print(f"Telegram send failed ({r.status_code}): {r.text[:200]}")
+        return False
+    except Exception as e:
+        print(f"Telegram send error: {e}")
+        return False
+
+
+def build_telegram_digest(jobs: list) -> str:
+    """Build a Markdown-formatted Telegram digest message."""
+    lines = [f"🇪🇹 *{len(jobs)} new job(s) for you:*\n"]
+    for j in jobs[:15]:
+        title = (j.get("title") or "Job").strip()[:80]
+        company = (j.get("company") or "").strip()[:60]
+        location = (j.get("location") or "").strip()[:40]
+        deadline = (j.get("deadline_text") or j.get("deadline") or "").strip()[:25]
+        job_id = j.get("id")
+        url = f"{SITE_BASE_URL}/job/{job_id}"
+        lines.append(f"*{title}*")
+        meta = []
+        if company:
+            meta.append(f"🏢 {company}")
+        if location:
+            meta.append(f"📍 {location}")
+        if meta:
+            lines.append("  ".join(meta))
+        if deadline:
+            lines.append(f"⏰ {deadline}")
+        lines.append(f"🔗 {url}\n")
+    if len(jobs) > 15:
+        lines.append(f"…and {len(jobs) - 15} more at {SITE_BASE_URL}")
+    lines.append("\n/unsubscribe to stop alerts")
+    return "\n".join(lines)
 
 
 def send_email(to: str, subject: str, body_text: str, body_html: str = None) -> bool:
@@ -105,6 +183,17 @@ def main():
         if not new_jobs:
             continue
         email = sub.get("email")
+
+        # Telegram bot subscribers — send via bot API, skip SMTP
+        if is_telegram_subscriber(email):
+            user_id = telegram_user_id(email)
+            digest_text = build_telegram_digest(new_jobs)
+            if send_telegram(user_id, digest_text):
+                db.mark_alert_sent(sub["id"])
+                sent += 1
+                print(f"Sent Telegram digest to user {user_id} ({len(new_jobs)} jobs)")
+            continue
+
         subject = f"EthioJobs: {len(new_jobs)} new job(s) for you"
         lines = [f"New jobs matching your alert ({len(new_jobs)}):", ""]
         for j in new_jobs[:20]:

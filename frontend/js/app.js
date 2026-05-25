@@ -66,7 +66,7 @@ function getChannelHtml(job, options = {}) {
     const cssClass = options.className ? ` ${options.className}` : '';
     return `
         <div class="job-source-channel${cssClass}">
-            <img src="${escapeHtml(photoPath)}" alt="" class="channel-avatar" width="${size}" height="${size}" loading="lazy"
+            <img src="${escapeHtml(photoPath)}" alt="" class="channel-avatar" width="${size}" height="${size}" loading="lazy" decoding="async"
                  onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">
             <span class="channel-avatar-fallback" style="display:none;">${displayText.charAt(0).toUpperCase()}</span>
             <span class="channel-name">${escapeHtml(displayText)}</span>
@@ -531,10 +531,7 @@ async function loadJobs(reset = false) {
         }
         if (!jobs.length) {
             if (reset) {
-                const emptyMsg = currentFilter === 'saved'
-                    ? '<div class="empty-state" style="grid-column: 1/-1;"><i class="far fa-bookmark empty-icon"></i><h3>No saved jobs</h3><p>Click the bookmark on any job to save it here.</p></div>'
-                    : '<div class="empty-state" style="grid-column: 1/-1;"><i class="fas fa-search empty-icon"></i><h3>No jobs found</h3><p>Try different keywords or clear filters to see all jobs.</p><button type="button" class="btn btn-outline btn-empty-state" onclick="clearAllFiltersAndReload()"><i class="fas fa-times-circle"></i> Show all jobs</button></div>';
-                elements.jobsGrid.innerHTML = emptyMsg;
+                elements.jobsGrid.innerHTML = renderEmptyState();
             }
             elements.loadMoreBtn.style.display = 'none';
         } else {
@@ -572,6 +569,50 @@ function setLoadMoreButtonState(loading) {
     } else {
         elements.loadMoreBtn.innerHTML = '<i class="fas fa-plus"></i> Load More Jobs';
     }
+}
+
+const POPULAR_KEYWORDS = ['Developer', 'Accountant', 'Engineer', 'Manager', 'Sales', 'Marketing', 'Driver', 'Teacher', 'Designer', 'Nurse'];
+const POPULAR_EMPTY_CATEGORIES = [
+    { slug: 'it', label: 'IT & Tech' },
+    { slug: 'finance', label: 'Finance' },
+    { slug: 'banking', label: 'Banking' },
+    { slug: 'engineering', label: 'Engineering' },
+    { slug: 'ngo', label: 'NGO' },
+    { slug: 'health', label: 'Health' },
+    { slug: 'teaching', label: 'Teaching' },
+    { slug: 'fresh_graduate', label: 'Fresh Graduate' },
+];
+
+function renderEmptyState() {
+    if (currentFilter === 'saved') {
+        return '<div class="empty-state" style="grid-column: 1/-1;"><i class="far fa-bookmark empty-icon"></i><h3>No saved jobs</h3><p>Click the bookmark on any job to save it here.</p></div>';
+    }
+    const searchTerm = (currentSearch || '').trim();
+    const headerText = searchTerm
+        ? `No jobs found for "${escapeHtml(searchTerm)}"`
+        : 'No jobs match your filters';
+    const lowerSearch = searchTerm.toLowerCase();
+    const kwChips = POPULAR_KEYWORDS
+        .filter(kw => kw.toLowerCase() !== lowerSearch)
+        .slice(0, 8)
+        .map(kw => `<button type="button" class="suggestion-chip" onclick="filterByCategory('${escapeHtml(kw)}')">${escapeHtml(kw)}</button>`)
+        .join('');
+    const catChips = POPULAR_EMPTY_CATEGORIES
+        .filter(c => c.slug !== currentFilter)
+        .slice(0, 8)
+        .map(c => `<button type="button" class="suggestion-chip suggestion-chip-cat" onclick="filterByCategory('${c.slug}')">${escapeHtml(c.label)}</button>`)
+        .join('');
+    return `
+        <div class="empty-state" style="grid-column: 1/-1;">
+            <i class="fas fa-search empty-icon"></i>
+            <h3>${headerText}</h3>
+            <p>Try one of these popular searches:</p>
+            <div class="suggestion-chips">${kwChips}</div>
+            <p class="suggestion-divider">Or browse by category:</p>
+            <div class="suggestion-chips">${catChips}</div>
+            <button type="button" class="btn btn-outline btn-empty-state" onclick="clearAllFiltersAndReload()"><i class="fas fa-times-circle"></i> Show all jobs</button>
+        </div>
+    `;
 }
 
 function clearAllFiltersAndReload() {

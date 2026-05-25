@@ -1607,6 +1607,46 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
     letter-spacing: -0.01em;
 }
 .empty-state p { color: var(--text-muted); font-size: 0.95rem; }
+.empty-state .suggestion-divider { margin-top: 1.25rem; }
+.suggestion-chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    max-width: 540px;
+    margin-left: auto;
+    margin-right: auto;
+}
+.suggestion-chip {
+    appearance: none;
+    border: 1px solid var(--divider);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    padding: 0.45rem 0.95rem;
+    border-radius: 999px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+}
+.suggestion-chip:hover {
+    background: var(--text-primary);
+    color: var(--bg-primary);
+    border-color: var(--text-primary);
+    transform: translateY(-1px);
+}
+.suggestion-chip-cat {
+    background: rgba(6, 95, 70, 0.06);
+    border-color: rgba(6, 95, 70, 0.2);
+    color: #065f46;
+}
+.suggestion-chip-cat:hover {
+    background: #065f46;
+    color: #fff;
+    border-color: #065f46;
+}
 
 /* Back to top */
 .back-to-top {
