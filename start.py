@@ -1,7 +1,10 @@
 """
 start.py — Single entry point for Render free tier.
-Runs api.py, main.py (Telegram listener), and telegram_bot.py
-all in one process so they fit in a single free web service.
+Runs api.py and main.py (Telegram channel listener) in one container.
+
+The Telegram bot is now served via webhook by api.py directly — no
+separate process needed. Run setup_telegram_webhook.py once after deploy
+to register the webhook URL with Telegram.
 
 Render start command: python start.py
 """
@@ -20,7 +23,6 @@ PYTHON = sys.executable
 services = [
     {"name": "api",      "cmd": [PYTHON, "api.py"]},
     {"name": "listener", "cmd": [PYTHON, "main.py"]},
-    {"name": "bot",      "cmd": [PYTHON, "telegram_bot.py"]},
 ]
 
 processes = []

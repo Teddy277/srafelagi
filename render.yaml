@@ -22,7 +22,9 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_BOT_SESSION_STRING
-        sync: false          # run: python generate_session.py  (bot session)
+        sync: false          # only needed if using the legacy polling bot
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false          # any long random string — verifies webhook calls really come from Telegram
 
       # ── AI (Gemini) ───────────────────────────────────────
       - key: AI_PROVIDERS

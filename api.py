@@ -186,6 +186,26 @@ async def startup():
     asyncio.create_task(_schedule_expired_cleanup())
 
 
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    """Telegram POSTs every user message here. Replaces the long-polling bot."""
+    import telegram_webhook as tg
+    if tg.WEBHOOK_SECRET:
+        sent_secret = request.headers.get("x-telegram-bot-api-secret-token", "")
+        if sent_secret != tg.WEBHOOK_SECRET:
+            raise HTTPException(status_code=403, detail="invalid secret")
+    try:
+        update = await request.json()
+    except Exception:
+        return {"ok": False, "error": "bad json"}
+    try:
+        import asyncio
+        await asyncio.to_thread(tg.handle_update, update, db)
+    except Exception as e:
+        logger.error("telegram webhook error: %s", e)
+    return {"ok": True}
+
+
 async def _schedule_daily_digest():
     """Run job alert digests every day at 09:00 UTC automatically."""
     import asyncio
