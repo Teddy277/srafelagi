@@ -177,6 +177,36 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+async def _keep_alive():
+    """Self-ping the public URL so Render's free tier never spins down.
+
+    Render free web services sleep after ~15 min with no inbound traffic,
+    which also kills the Telegram listener. This loop generates that traffic
+    automatically. It only runs when a public https:// URL is configured
+    (i.e. in production on Render) — it stays off during local development.
+    """
+    import asyncio
+    base = (os.getenv("SITE_URL") or os.getenv("SITE_BASE_URL") or "").rstrip("/")
+    if not base.startswith("https://"):
+        logger.info("Keep-alive disabled (no public https SITE_URL set)")
+        return
+
+    url = f"{base}/ping"
+    interval = int(os.getenv("KEEP_ALIVE_SECONDS", "600"))  # 10 min < Render's 15 min sleep window
+    logger.info("Keep-alive enabled: pinging %s every %ss", url, interval)
+
+    import aiohttp
+    await asyncio.sleep(interval)  # let the service finish booting before the first ping
+    while True:
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+                async with session.get(url) as resp:
+                    logger.info("Keep-alive ping -> %s", resp.status)
+        except Exception as e:
+            logger.warning("Keep-alive ping failed: %s", e)
+        await asyncio.sleep(interval)
+
+
 @app.on_event("startup")
 async def startup():
     db.initialize()
@@ -184,6 +214,7 @@ async def startup():
     import asyncio
     asyncio.create_task(_schedule_daily_digest())
     asyncio.create_task(_schedule_expired_cleanup())
+    asyncio.create_task(_keep_alive())
 
 
 @app.post("/telegram/webhook")
@@ -389,6 +420,13 @@ async def health():
     except Exception:
         from fastapi.responses import JSONResponse
         return JSONResponse({"status": "db_error"}, status_code=503)
+
+
+@app.get("/ping")
+async def ping():
+    """Lightweight keep-alive target — no DB hit, so it keeps the web service
+    awake without forcing Neon's compute to stay on 24/7."""
+    return {"ok": True}
 
 
 # ============ JOB VIEW TRACKING ============

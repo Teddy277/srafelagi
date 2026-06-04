@@ -1,0 +1,31 @@
+name: keep-alive
+
+# Pings the public site so Render's free tier never falls asleep, and wakes it
+# from a cold stop if it ever does. This is a backup to the in-app self-ping in
+# api.py — being external, it can reach the service even when it's fully stopped.
+#
+# Setup (optional): under Settings -> Secrets and variables -> Actions -> Variables,
+# add a repository variable named SITE_URL. If you don't, it uses the default below.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes (GitHub may delay runs under load)
+  workflow_dispatch:          # also runnable by hand from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the site
+        env:
+          SITE_URL: ${{ vars.SITE_URL || 'https://srafelagi.onrender.com' }}
+        run: |
+          echo "Pinging $SITE_URL/ping"
+          # --retry handles Render cold starts, which can take ~50s to wake up.
+          # --fail makes a bad response exit non-zero, so GitHub emails you on downtime.
+          curl --fail --silent --show-error \
+               --retry 5 --retry-all-errors --retry-delay 15 \
+               --max-time 90 \
+               "$SITE_URL/ping"
+          echo ""
+          echo "OK"
