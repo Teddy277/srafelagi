@@ -443,10 +443,15 @@ async def health():
         return JSONResponse({"status": "db_error"}, status_code=503)
 
 
-@app.get("/ping")
+@app.api_route("/ping", methods=["GET", "HEAD"])
 async def ping():
     """Lightweight keep-alive target — no DB hit, so it keeps the web service
-    awake without forcing Neon's compute to stay on 24/7."""
+    awake without forcing Neon's compute to stay on 24/7.
+
+    Accepts HEAD as well as GET because uptime monitors (e.g. UptimeRobot)
+    send HEAD by default; a GET-only route would answer 405 and the monitor
+    would report false downtime.
+    """
     return {"ok": True}
 
 
