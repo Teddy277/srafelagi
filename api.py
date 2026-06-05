@@ -207,11 +207,32 @@ async def _keep_alive():
         await asyncio.sleep(interval)
 
 
+async def _init_db_with_retry():
+    """Connect to the database without blocking startup.
+
+    Neon's free tier can take a few seconds to wake from sleep. If we connected
+    synchronously in the startup event and it failed, uvicorn would abort and the
+    port would close — which Render reports as a deploy timeout. Instead we retry
+    in the background so the web server binds its port immediately and stays up;
+    request handlers reconnect lazily via _ensure_connection() until this succeeds.
+    """
+    import asyncio
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            await asyncio.to_thread(db.initialize)
+            logger.info("Database ready")
+            return
+        except Exception as e:
+            logger.error("Database init failed (attempt %s, retrying in 15s): %s", attempt, e)
+            await asyncio.sleep(15)
+
+
 @app.on_event("startup")
 async def startup():
-    db.initialize()
-    logger.info("Database ready")
     import asyncio
+    asyncio.create_task(_init_db_with_retry())
     asyncio.create_task(_schedule_daily_digest())
     asyncio.create_task(_schedule_expired_cleanup())
     asyncio.create_task(_keep_alive())
