@@ -22,6 +22,32 @@ from utils import normalize_url, normalize_text, calculate_job_similarity, parse
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# Characters that render as "unrecognized" boxes (◇/�) or break JSON.
+# Corrupted Amharic/emoji from some sources arrives as lone UTF-16 surrogates
+# (e.g. '\udc8d') or the U+FFFD replacement char; both show as broken glyphs in
+# the browser. We also drop control chars (keeping tab/newline/CR) and the
+# invisible soft hyphen. Stripping these cleans titles without touching valid
+# Amharic, Latin, or emoji text.
+_BAD_CHARS_RE = re.compile(
+    '[\ud800-\udfff'          # lone surrogates -> '\udcXX'
+    '�'                  # replacement character -> the box/diamond glyph
+    '\x00-\x08\x0b\x0c\x0e-\x1f'  # control chars (keep \t \n \r)
+    '\xad]'                   # soft hyphen (invisible, looks like junk in some fonts)
+)
+
+
+def clean_text(value):
+    """Remove corrupted/invisible characters so text displays cleanly.
+
+    Returns None for empty/whitespace-only results so callers fall back to
+    their own defaults (e.g. the UI's "Untitled Job"). Non-strings pass through.
+    """
+    if not isinstance(value, str):
+        return value
+    cleaned = _BAD_CHARS_RE.sub('', value)
+    cleaned = re.sub(r'[ \t]{2,}', ' ', cleaned).strip()
+    return cleaned or None
+
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor, Json
@@ -852,6 +878,13 @@ class Database:
         Enhanced duplicate detection using normalized fields and similarity matching.
         """
         self._ensure_connection()
+
+        # Strip corrupted/invisible characters (lone surrogates, U+FFFD boxes,
+        # control chars) from text fields before anything else, so both the
+        # insert and the duplicate-update path below store clean text.
+        for _field in ('title', 'company', 'location', 'description', 'raw_text'):
+            if job_data.get(_field) is not None:
+                job_data[_field] = clean_text(job_data[_field])
 
         source_url = job_data.get('source_url') or None
         if isinstance(source_url, str) and source_url.strip() == '':
