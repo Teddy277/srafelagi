@@ -29,6 +29,9 @@
     <!-- Icons (loaded non-render-blocking) -->
     <link rel="preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" onload="this.onload=null;this.rel='stylesheet'">
     <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"></noscript>
+
+    <!-- Google Sign-In (account-chooser popup) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇪🇹</text></svg>">
@@ -84,12 +87,9 @@
                     </button>
                     <div class="login-popover" id="loginPopover" hidden role="dialog" aria-label="Sign in to save jobs">
                         <p class="login-popover-title">Save jobs to your account</p>
-                        <div id="tgLoginContainer" class="tg-login-container"></div>
+                        <div id="googleBtnContainer" class="google-btn-container"></div>
                         <div class="login-or"><span>or</span></div>
-                        <form id="emailLoginForm" class="login-email-form" novalidate>
-                            <input type="email" id="emailLoginInput" placeholder="your@email.com" required autocomplete="email" aria-label="Email address">
-                            <button type="submit" class="btn btn-outline btn-block">Email me a sign-in link</button>
-                        </form>
+                        <div id="tgLoginContainer" class="tg-login-container"></div>
                         <p class="login-popover-msg" id="loginPopoverMsg" aria-live="polite"></p>
                         <p class="login-popover-note">No password. We only use this to sync your saved jobs.</p>
                     </div>

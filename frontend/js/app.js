@@ -308,7 +308,7 @@ function renderAuthUI() {
         }
     } else {
         if (menu) menu.hidden = true;
-        if (authArea) { authArea.hidden = false; renderTelegramWidget(); }
+        if (authArea) { authArea.hidden = false; renderTelegramWidget(); renderGoogleButton(); }
     }
 }
 
@@ -392,46 +392,63 @@ function initAuth() {
 function setupLoginPopover() {
     const btn = document.getElementById('loginOpenBtn');
     const pop = document.getElementById('loginPopover');
-    if (btn && pop) {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const willOpen = pop.hidden;
-            pop.hidden = !willOpen;
-            btn.setAttribute('aria-expanded', String(willOpen));
-            if (willOpen) { renderTelegramWidget(); document.getElementById('emailLoginInput')?.focus(); }
-        });
-        pop.addEventListener('click', (e) => e.stopPropagation());
-        document.addEventListener('click', (e) => {
-            if (!pop.hidden && !btn.contains(e.target)) { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
-        });
-    }
-    const form = document.getElementById('emailLoginForm');
-    const msg = document.getElementById('loginPopoverMsg');
-    if (form) {
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const email = document.getElementById('emailLoginInput')?.value?.trim();
-            if (!email) return;
-            if (msg) { msg.textContent = 'Sending…'; msg.className = 'login-popover-msg'; }
-            try {
-                const res = await fetch(`${API_BASE}/api/auth/email/request`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email }),
-                });
-                const data = await res.json().catch(() => ({}));
-                if (res.ok) {
-                    if (msg) { msg.textContent = data.message || 'Check your email for a sign-in link.'; msg.className = 'login-popover-msg success'; }
-                    form.reset();
-                } else {
-                    if (msg) { msg.textContent = data.detail || 'Something went wrong. Try again.'; msg.className = 'login-popover-msg error'; }
-                }
-            } catch (err) {
-                if (msg) { msg.textContent = 'Network error. Try again.'; msg.className = 'login-popover-msg error'; }
-            }
-        });
-    }
+    if (!btn || !pop) return;
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = pop.hidden;
+        pop.hidden = !willOpen;
+        btn.setAttribute('aria-expanded', String(willOpen));
+        if (willOpen) { renderGoogleButton(); renderTelegramWidget(); }
+    });
+    pop.addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener('click', (e) => {
+        if (!pop.hidden && !btn.contains(e.target)) { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+    });
 }
+
+/** Render Google's "Continue with Google" button (opens the account-chooser popup). */
+function renderGoogleButton(attempt = 0) {
+    const cid = window.SRAFELAGI_GOOGLE_CLIENT_ID;
+    const el = document.getElementById('googleBtnContainer');
+    if (!cid || !el) return;            // not configured yet — Telegram login still works
+    if (el.dataset.rendered) return;
+    if (!(window.google && google.accounts && google.accounts.id)) {
+        if (attempt < 20) setTimeout(() => renderGoogleButton(attempt + 1), 300); // GIS script still loading
+        return;
+    }
+    google.accounts.id.initialize({ client_id: cid, callback: onGoogleCredential });
+    google.accounts.id.renderButton(el, { theme: 'outline', size: 'large', text: 'continue_with', shape: 'pill', width: 240 });
+    el.dataset.rendered = '1';
+}
+
+/** Google Sign-In callback — exchange the ID token for a Srafelagi session. */
+window.onGoogleCredential = async function (resp) {
+    const msg = document.getElementById('loginPopoverMsg');
+    if (msg) { msg.textContent = 'Signing in…'; msg.className = 'login-popover-msg'; }
+    try {
+        const r = await fetch(`${API_BASE}/api/auth/google`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credential: resp.credential }),
+        });
+        if (!r.ok) {
+            const d = await r.json().catch(() => ({}));
+            if (msg) { msg.textContent = d.detail || 'Google sign-in failed.'; msg.className = 'login-popover-msg error'; }
+            return;
+        }
+        const data = await r.json();
+        setAuthToken(data.access_token);
+        currentUser = data.user;
+        await mergeAndSyncSaved();
+        const pop = document.getElementById('loginPopover');
+        if (pop) pop.hidden = true;
+        renderAuthUI();
+        showToast('Signed in as ' + (currentUser.first_name || currentUser.email || 'you'), 'success');
+        if (currentFilter === 'saved') loadJobs(true);
+    } catch (e) {
+        if (msg) { msg.textContent = 'Network error. Try again.'; msg.className = 'login-popover-msg error'; }
+    }
+};
 
 function setupUserMenu() {
     const btn = document.getElementById('userMenuBtn');

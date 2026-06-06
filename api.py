@@ -179,8 +179,9 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-# ── Telegram login (no password) ─────────────────────────────────────────────
+# ── Social login (no password) ───────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or "").strip()
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 USER_SESSION_DAYS = int(os.getenv("USER_SESSION_DAYS", "60"))
 
 
@@ -705,6 +706,46 @@ async def auth_telegram(payload: dict):
         last_name=payload.get("last_name"),
         username=payload.get("username"),
         photo_url=payload.get("photo_url"),
+    )
+    if not user:
+        raise HTTPException(status_code=500, detail="Could not create session")
+    token = create_user_token(user["user_id"])
+    return {"access_token": token, "token_type": "bearer", "user": user}
+
+
+@app.post("/api/auth/google")
+async def auth_google(payload: dict):
+    """Verify a Google Sign-In ID token (account-chooser popup), upsert the user, return a session token."""
+    credential = (payload or {}).get("credential")
+    if not credential:
+        raise HTTPException(status_code=400, detail="Missing Google credential")
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="Google login is not configured")
+    import requests as _requests
+    try:
+        resp = _requests.get("https://oauth2.googleapis.com/tokeninfo",
+                             params={"id_token": credential}, timeout=10)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Could not reach Google. Try again.")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid Google sign-in")
+    info = resp.json()
+    # Validate the token is really ours and trustworthy.
+    if info.get("aud") != GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=401, detail="Google token audience mismatch")
+    if info.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+        raise HTTPException(status_code=401, detail="Bad Google token issuer")
+    if str(info.get("email_verified")).lower() != "true":
+        raise HTTPException(status_code=401, detail="Google email not verified")
+    email = (info.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="No email in Google token")
+    user = db.upsert_email_user(
+        email,
+        first_name=info.get("given_name"),
+        last_name=info.get("family_name"),
+        photo_url=info.get("picture"),
+        provider="google",
     )
     if not user:
         raise HTTPException(status_code=500, detail="Could not create session")

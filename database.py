@@ -1943,8 +1943,11 @@ class Database:
                 pass
             return None
 
-    def upsert_email_user(self, email: str) -> Optional[Dict[str, Any]]:
-        """Create or update an email-login user (keyed by email). Returns the user dict."""
+    def upsert_email_user(self, email: str, first_name=None, last_name=None,
+                          photo_url=None, provider: str = "email") -> Optional[Dict[str, Any]]:
+        """Create or update an email-based user (keyed by email). Covers both
+        magic-link ('email') and Google ('google') sign-in. COALESCE keeps an
+        existing name/photo if a later login doesn't supply one. Returns the user dict."""
         self._ensure_connection()
         email = (email or "").strip().lower()
         if not email:
@@ -1953,12 +1956,17 @@ class Database:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     f"""
-                    INSERT INTO users (email, auth_provider, created_at, last_login_at)
-                    VALUES (%s, 'email', NOW(), NOW())
-                    ON CONFLICT (email) DO UPDATE SET last_login_at = NOW()
+                    INSERT INTO users (email, first_name, last_name, photo_url, auth_provider, created_at, last_login_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+                    ON CONFLICT (email) DO UPDATE SET
+                        first_name    = COALESCE(EXCLUDED.first_name, users.first_name),
+                        last_name     = COALESCE(EXCLUDED.last_name, users.last_name),
+                        photo_url     = COALESCE(EXCLUDED.photo_url, users.photo_url),
+                        auth_provider = EXCLUDED.auth_provider,
+                        last_login_at = NOW()
                     RETURNING {self._USER_COLS}
                     """,
-                    (email,),
+                    (email, first_name, last_name, photo_url, (provider or "email")[:20]),
                 )
                 row = cur.fetchone()
             self.conn.commit()

@@ -2776,6 +2776,7 @@ body.popup-open { overflow: hidden; }
 .login-popover[hidden] { display: none; }
 .login-popover-title { font-weight: 700; font-size: 0.95rem; color: var(--text-primary); text-align: center; margin: 0; }
 .login-popover .tg-login-container { justify-content: center; min-height: 44px; }
+.google-btn-container { display: flex; justify-content: center; min-height: 40px; }
 .login-or {
     display: flex; align-items: center; gap: 10px;
     color: var(--text-muted); font-size: 0.8rem;
