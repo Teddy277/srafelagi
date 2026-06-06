@@ -2,6 +2,7 @@
 Srafelagi API - Complete Version
 """
 import os
+import json
 import socket
 import hashlib
 import hmac
@@ -1772,13 +1773,20 @@ if os.path.exists(FRONTEND_DIR):
             return FileResponse(p, media_type="application/manifest+json")
         raise HTTPException(status_code=404)
 
-    # Runtime config (API base + Telegram bot username for the login widget)
+    # Runtime config — generated from server env so there's ONE source of truth
+    # for the Telegram bot username and Google client id (no static file to sync).
     @app.get("/config.js")
     async def serve_config_js():
-        p = os.path.join(FRONTEND_DIR, "config.js")
-        if os.path.exists(p):
-            return FileResponse(p, media_type="application/javascript")
-        raise HTTPException(status_code=404)
+        cfg = {
+            "SRAFELAGI_API_BASE": os.getenv("PUBLIC_API_BASE", "").strip(),
+            "SRAFELAGI_BOT_USERNAME": os.getenv("TELEGRAM_BOT_USERNAME", "Srafelagi1_bot").strip(),
+            "SRAFELAGI_GOOGLE_CLIENT_ID": GOOGLE_CLIENT_ID,
+        }
+        js = "// Generated from server environment at runtime.\n" + "".join(
+            f"window.{k} = {json.dumps(v)};\n" for k, v in cfg.items()
+        )
+        return Response(content=js, media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
 
     # Serve admin pages (/admin and /admin/ -> login.html)
     @app.get("/admin/{path:path}")

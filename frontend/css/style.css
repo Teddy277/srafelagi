@@ -1716,8 +1716,10 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 @media (max-width: 768px) {
     :root { --section-padding: 64px; }
 
-    /* Navbar — show hamburger, hide links */
+    /* Navbar — show hamburger, hide links, drop the redundant Search CTA */
     .nav-actions .btn span { display: none; }
+    .nav-actions a.btn-primary { display: none; } /* hero already has a big search box */
+    .nav-actions { gap: 8px; }
     .mobile-menu-btn { display: flex; }
     .nav-links {
         display: none;

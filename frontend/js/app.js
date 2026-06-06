@@ -410,7 +410,17 @@ function setupLoginPopover() {
 function renderGoogleButton(attempt = 0) {
     const cid = window.SRAFELAGI_GOOGLE_CLIENT_ID;
     const el = document.getElementById('googleBtnContainer');
-    if (!cid || !el) return;            // not configured yet — Telegram login still works
+    const orDiv = document.querySelector('.login-popover .login-or');
+    if (!el) return;
+    // Not configured yet → hide the Google slot + divider so the popover stays clean
+    // (Telegram login still works on its own).
+    if (!cid) {
+        el.style.display = 'none';
+        if (orDiv) orDiv.style.display = 'none';
+        return;
+    }
+    el.style.display = '';
+    if (orDiv) orDiv.style.display = '';
     if (el.dataset.rendered) return;
     if (!(window.google && google.accounts && google.accounts.id)) {
         if (attempt < 20) setTimeout(() => renderGoogleButton(attempt + 1), 300); // GIS script still loading
