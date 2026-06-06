@@ -553,6 +553,7 @@ async function init() {
     initAlertsForm();
     initAlertsOnboarding();
     initAuth();
+    initPostJobModal();
 
     // Show confirmation message if user just confirmed email alert
     const params = new URLSearchParams(window.location.search);
@@ -1746,6 +1747,89 @@ function initAlertsOnboarding() {
         } catch (err) {
             msgEl.textContent = 'Network error. Try again.';
             msgEl.className = 'alerts-form-message error';
+        }
+    });
+}
+
+// ============ POST A JOB (homepage modal) ============
+function initPostJobModal() {
+    const overlay = document.getElementById('postJobModal');
+    if (!overlay) return;
+    const form = document.getElementById('pjForm');
+    const banner = document.getElementById('pjPriceBanner');
+    const paySection = document.getElementById('pjPaymentSection');
+    const payInfo = document.getElementById('pjPaymentInfo');
+    const proof = document.getElementById('pjProof');
+    const msg = document.getElementById('pjMsg');
+    const submitBtn = document.getElementById('pjSubmit');
+    let PRICE = 100;
+    let configLoaded = false;
+
+    function loadConfig() {
+        if (configLoaded) return;
+        configLoaded = true;
+        fetch(`${API_BASE}/api/post-job/config`).then(r => r.json()).then(c => {
+            PRICE = Number(c.price_birr) || 0;
+            if (PRICE > 0) {
+                banner.className = 'pj-price paid';
+                banner.innerHTML = 'Posting fee: <strong>' + PRICE + ' birr</strong> — pay, then upload your screenshot below.';
+                paySection.hidden = false;
+                payInfo.textContent = c.payment_info || 'Pay the posting fee, then upload your payment screenshot below.';
+            } else {
+                banner.className = 'pj-price free';
+                banner.innerHTML = '<strong>Post a job for free</strong> 🎉';
+                paySection.hidden = true;
+            }
+        }).catch(() => { banner.style.display = 'none'; configLoaded = false; });
+    }
+    function openModal() { loadConfig(); overlay.hidden = false; document.body.style.overflow = 'hidden'; }
+    function closeModal2() { overlay.hidden = true; document.body.style.overflow = ''; }
+
+    document.querySelectorAll('.js-post-job').forEach(el => el.addEventListener('click', (e) => { e.preventDefault(); openModal(); }));
+    document.getElementById('pjClose')?.addEventListener('click', closeModal2);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal2(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !overlay.hidden) closeModal2(); });
+
+    form?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const v = (id) => (document.getElementById(id).value || '').trim();
+        if (!v('pjCompany') || !v('pjTitle') || v('pjDescription').length < 20 || !v('pjContactEmail').includes('@')) {
+            msg.textContent = 'Please fill company, a valid email, title, and a description (20+ characters).';
+            msg.className = 'pj-msg error'; return;
+        }
+        if (PRICE > 0 && !proof.files[0]) {
+            msg.textContent = 'Please upload your payment screenshot.';
+            msg.className = 'pj-msg error'; return;
+        }
+        const fd = new FormData();
+        fd.append('company', v('pjCompany'));
+        fd.append('contact_email', v('pjContactEmail'));
+        fd.append('title', v('pjTitle'));
+        fd.append('description', v('pjDescription'));
+        fd.append('location', v('pjLocation'));
+        fd.append('deadline', v('pjDeadline'));
+        fd.append('salary', v('pjSalary'));
+        fd.append('apply_url', v('pjApplyUrl'));
+        fd.append('apply_email', v('pjApplyEmail'));
+        if (PRICE > 0 && proof.files[0]) fd.append('payment_proof', proof.files[0]);
+        submitBtn.disabled = true;
+        msg.textContent = 'Submitting…'; msg.className = 'pj-msg';
+        try {
+            const res = await fetch(`${API_BASE}/api/post-job`, { method: 'POST', body: fd });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                msg.textContent = data.message || 'Submitted! Your job will appear after admin approval.';
+                msg.className = 'pj-msg success';
+                form.reset();
+            } else {
+                msg.textContent = data.detail || 'Something went wrong. Please try again.';
+                msg.className = 'pj-msg error';
+            }
+        } catch (err) {
+            msg.textContent = 'Network error. Please try again.';
+            msg.className = 'pj-msg error';
+        } finally {
+            submitBtn.disabled = false;
         }
     });
 }

@@ -75,6 +75,7 @@
             <div class="nav-links" id="navLinks">
                 <a href="#jobs" class="nav-link active">Find Jobs</a>
                 <a href="#categories" class="nav-link">Categories</a>
+                <a href="/post-job" class="nav-link js-post-job">Post a Job</a>
                 <a href="#about" class="nav-link">About</a>
                 <a href="#stats" class="nav-link">Statistics</a>
             </div>
@@ -176,6 +177,8 @@
                     <button class="tag" data-search="driver">Driver</button>
                     <button class="tag" data-search="fresh graduate">Fresh Graduate</button>
                 </div>
+
+                <p class="hero-employer"><span>Are you hiring?</span> <a href="/post-job" class="js-post-job">Post a job →</a></p>
 
                 <div class="sources-ticker-wrap" aria-label="Job sources">
                     <p class="sources-ticker-label">Jobs on this site are collected from these Telegram channels:</p>
@@ -442,7 +445,7 @@
                     <ul>
                         <li><a href="#jobs">Browse Jobs</a></li>
                         <li><a href="#categories">Categories</a></li>
-                        <li><a href="/post-job">Post a Job</a></li>
+                        <li><a href="/post-job" class="js-post-job">Post a Job</a></li>
                         <li><a href="#about">About Us</a></li>
                         <li><a href="#stats">Statistics</a></li>
                         <li><a href="/privacy">Privacy Policy</a></li>
@@ -522,6 +525,39 @@
             </form>
             <p id="alertsPopupMessage" class="alerts-form-message" aria-live="polite"></p>
             <button class="alerts-popup-skip" id="alertsPopupSkip">Maybe later</button>
+        </div>
+    </div>
+
+    <!-- Post a Job (homepage popup) -->
+    <div class="pj-modal-overlay" id="postJobModal" hidden role="dialog" aria-modal="true" aria-label="Post a job">
+        <div class="pj-card">
+            <button type="button" class="pj-close" id="pjClose" aria-label="Close"><i class="fas fa-times"></i></button>
+            <h2>Post a Job</h2>
+            <p class="pj-sub">Reach thousands of Ethiopian job seekers. Your post is reviewed before it goes live.</p>
+            <div id="pjPriceBanner" class="pj-price">Loading…</div>
+            <form id="pjForm" novalidate>
+                <div class="pj-row">
+                    <div class="pj-field"><label for="pjCompany">Company name <span class="req">*</span></label><input type="text" id="pjCompany" required maxlength="255"></div>
+                    <div class="pj-field"><label for="pjContactEmail">Your email <span class="req">*</span></label><input type="email" id="pjContactEmail" required maxlength="255" placeholder="we contact you here"></div>
+                </div>
+                <div class="pj-field"><label for="pjTitle">Job title <span class="req">*</span></label><input type="text" id="pjTitle" required maxlength="200"></div>
+                <div class="pj-row">
+                    <div class="pj-field"><label for="pjLocation">Location</label><input type="text" id="pjLocation" maxlength="120" placeholder="e.g. Addis Ababa"></div>
+                    <div class="pj-field"><label for="pjDeadline">Deadline</label><input type="text" id="pjDeadline" maxlength="120" placeholder="e.g. Jan 30, 2026"></div>
+                </div>
+                <div class="pj-row">
+                    <div class="pj-field"><label for="pjSalary">Salary (optional)</label><input type="text" id="pjSalary" maxlength="120" placeholder="e.g. 25,000 ETB"></div>
+                    <div class="pj-field"><label for="pjApplyEmail">Apply email (optional)</label><input type="email" id="pjApplyEmail" maxlength="255" placeholder="where CVs go"></div>
+                </div>
+                <div class="pj-field"><label for="pjApplyUrl">Apply link (optional)</label><input type="url" id="pjApplyUrl" maxlength="500" placeholder="https://..."><p class="pj-hint">If you leave apply email and link empty, we'll use your contact email.</p></div>
+                <div class="pj-field"><label for="pjDescription">Job description <span class="req">*</span></label><textarea id="pjDescription" required placeholder="Responsibilities, requirements, how to apply…"></textarea></div>
+                <div class="pj-payment" id="pjPaymentSection" hidden>
+                    <p class="pj-payment-info" id="pjPaymentInfo"></p>
+                    <div class="pj-field" style="margin:0;"><label for="pjProof">Payment screenshot <span class="req">*</span></label><input type="file" id="pjProof" accept="image/*"><p class="pj-hint">Image, max 3MB.</p></div>
+                </div>
+                <button type="submit" class="btn btn-primary btn-lg btn-block" id="pjSubmit">Submit job</button>
+                <p class="pj-msg" id="pjMsg" aria-live="polite"></p>
+            </form>
         </div>
     </div>
 

@@ -2811,3 +2811,49 @@ body.popup-open { overflow: hidden; }
         width: min(330px, calc(100vw - 24px));
     }
 }
+
+/* ============ POST A JOB (page + homepage modal) ============ */
+.hero-employer { margin-top: 18px; font-size: 0.9rem; color: var(--text-muted); }
+.hero-employer a { color: var(--primary); font-weight: 600; }
+.hero-employer a:hover { text-decoration: underline; }
+
+.pj-modal-overlay {
+    position: fixed; inset: 0; z-index: 3000;
+    background: rgba(15, 23, 42, 0.5);
+    display: flex; align-items: flex-start; justify-content: center;
+    overflow-y: auto; padding: 80px 16px 40px;
+}
+.pj-modal-overlay[hidden] { display: none; }
+.pj-card {
+    background: var(--bg-primary); border: 1px solid var(--divider);
+    border-radius: var(--radius-xl); padding: 30px; box-shadow: var(--shadow-lg);
+    width: 100%; max-width: 640px; position: relative;
+}
+.pj-card h2 { font-family: var(--font-display); font-size: 1.7rem; color: var(--text-primary); margin-bottom: 6px; }
+.pj-sub { color: var(--text-muted); margin-bottom: 18px; font-size: 0.95rem; }
+.pj-close {
+    position: absolute; top: 14px; right: 14px;
+    background: var(--bg-tertiary); border: none; width: 34px; height: 34px;
+    border-radius: 50%; cursor: pointer; color: var(--text-secondary); font-size: 15px;
+}
+.pj-price { border-radius: var(--radius-md); padding: 13px 16px; margin-bottom: 20px; font-size: 1rem; text-align: center; }
+.pj-price.free { background: var(--primary-soft); color: var(--primary); }
+.pj-price.paid { background: var(--bg-tertiary); color: var(--text-primary); }
+.pj-field { margin-bottom: 14px; }
+.pj-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.pj-field label { display: block; font-weight: 600; font-size: 0.88rem; margin-bottom: 6px; color: var(--text-secondary); }
+.pj-field .req { color: #dc2626; }
+.pj-field input, .pj-field textarea {
+    width: 100%; padding: 11px 14px; border: 1px solid var(--divider);
+    border-radius: var(--radius-md); background: var(--bg-secondary);
+    color: var(--text-primary); font-family: inherit; font-size: 0.95rem;
+}
+.pj-field input:focus, .pj-field textarea:focus { outline: none; border-color: var(--primary); }
+.pj-field textarea { min-height: 130px; resize: vertical; }
+.pj-hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 5px; }
+.pj-payment { border: 1px dashed var(--border-strong, var(--divider)); border-radius: var(--radius-md); padding: 16px; margin-bottom: 16px; background: var(--bg-secondary); }
+.pj-payment-info { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 12px; white-space: pre-wrap; }
+.pj-msg { text-align: center; margin-top: 12px; font-size: 0.92rem; min-height: 1.2em; }
+.pj-msg.success { color: var(--primary); }
+.pj-msg.error { color: #dc2626; }
+@media (max-width: 560px) { .pj-row { grid-template-columns: 1fr; } .pj-card { padding: 22px; } .pj-modal-overlay { padding: 70px 12px 30px; } }
