@@ -10,6 +10,22 @@
     let isOpen = false;
     let isLoading = false;
 
+    // Stable id for this chat session (groups the conversation in the admin dashboard).
+    const SESSION_ID = (function () {
+        try {
+            let s = sessionStorage.getItem('srafelagi_chat_sid');
+            if (!s) {
+                s = (window.crypto && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : 's_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+                sessionStorage.setItem('srafelagi_chat_sid', s);
+            }
+            return s;
+        } catch (e) {
+            return 's_' + Date.now().toString(36);
+        }
+    })();
+
     // ── Inject HTML ─────────────────────────────────────────
     const html = `
 <div id="ai-chat-btn" title="AI Job Assistant" aria-label="Open AI Job Assistant">
@@ -282,10 +298,12 @@
         _abortCtrl = new AbortController();
 
         try {
+            const _headers = { 'Content-Type': 'application/json' };
+            try { const _t = localStorage.getItem('srafelagi_auth_token'); if (_t) _headers['Authorization'] = 'Bearer ' + _t; } catch (e) {}
             const res = await fetch(`${API_BASE}/api/assistant/chat`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: msg, history: history.slice(-8), cv_text: cvText, user_name: currentUserName() }),
+                headers: _headers,
+                body: JSON.stringify({ message: msg, history: history.slice(-8), cv_text: cvText, user_name: currentUserName(), session_id: SESSION_ID }),
                 signal: _abortCtrl.signal,
             });
             const data = await res.json();

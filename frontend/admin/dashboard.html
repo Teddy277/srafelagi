@@ -88,6 +88,13 @@
                                 <div class="stat-label">New Users (7d)</div>
                             </div>
                         </div>
+                        <div class="stat-card stat-card--users">
+                            <div class="stat-icon"><i class="fas fa-comments"></i></div>
+                            <div class="stat-content">
+                                <div class="stat-value" id="statConversations">—</div>
+                                <div class="stat-label">AI Conversations</div>
+                            </div>
+                        </div>
                     </div>
                 </section>
                 <section class="dashboard-section">
@@ -158,6 +165,27 @@
                         <p id="usersEmpty" class="top-jobs-empty" style="display:none;">No registered users yet.</p>
                     </div>
                 </section>
+                <section class="dashboard-section">
+                    <h2 class="dashboard-section-title">AI Conversations</h2>
+                    <div class="top-jobs-wrapper">
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>User</th>
+                                    <th>First message</th>
+                                    <th>Msgs</th>
+                                    <th>Last activity</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="conversationsBody">
+                                <tr><td colspan="6" class="top-jobs-loading">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                        <p id="conversationsEmpty" class="top-jobs-empty" style="display:none;">No conversations yet.</p>
+                    </div>
+                </section>
                 <div class="admin-actions">
                     <button type="button" class="btn btn-danger" onclick="deleteExpired()">
                         <i class="fas fa-trash"></i> Delete Expired Jobs
@@ -195,6 +223,18 @@
             </div>
         </div>
     </main>
+    <!-- Conversation viewer -->
+    <div id="convoModal" class="convo-modal" hidden>
+        <div class="convo-modal-backdrop" id="convoModalBackdrop"></div>
+        <div class="convo-modal-card">
+            <div class="convo-modal-head">
+                <span id="convoModalTitle">Conversation</span>
+                <button type="button" id="convoModalClose" class="convo-modal-close" aria-label="Close">✕</button>
+            </div>
+            <div id="convoModalBody" class="convo-modal-body"></div>
+        </div>
+    </div>
+
     <script src="admin.js"></script>
     <script>
         const API_BASE = resolveApiBase();
@@ -327,6 +367,76 @@
                 if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="color:#dc2626;text-align:center">Failed to load users</td></tr>';
             }
         }
+        function fmtDate(s) { try { return s ? new Date(s).toLocaleString() : '—'; } catch (e) { return '—'; } }
+        function convoUserLabel(c) {
+            const name = [c.first_name, c.last_name].filter(Boolean).join(' ');
+            if (name) return name + (c.auth_provider ? ' (' + c.auth_provider + ')' : '');
+            if (c.username) return '@' + c.username;
+            if (c.email) return c.email;
+            return 'Anonymous';
+        }
+
+        async function loadConversations() {
+            try {
+                const res = await fetch(API_BASE + '/api/admin/conversations', {
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')}
+                });
+                if (res.status === 401) return;
+                if (!res.ok) throw new Error('Failed to load conversations');
+                const data = await res.json();
+                const sc = document.getElementById('statConversations');
+                if (sc) sc.textContent = data.total ?? '—';
+                const convos = data.conversations || [];
+                const tbody = document.getElementById('conversationsBody');
+                const emptyEl = document.getElementById('conversationsEmpty');
+                if (!convos.length) {
+                    tbody.innerHTML = '';
+                    if (emptyEl) emptyEl.style.display = 'block';
+                    return;
+                }
+                if (emptyEl) emptyEl.style.display = 'none';
+                tbody.innerHTML = convos.map((c, i) => `
+                    <tr>
+                        <td>${i + 1}</td>
+                        <td>${escapeHtml(convoUserLabel(c))}</td>
+                        <td>${escapeHtml((c.first_user_message || '').slice(0, 70))}${(c.first_user_message || '').length > 70 ? '…' : ''}</td>
+                        <td><strong>${c.message_count ?? 0}</strong></td>
+                        <td>${escapeHtml(fmtDate(c.last_at))}</td>
+                        <td><button class="btn btn-small btn-primary" onclick="viewConversation('${encodeURIComponent(c.session_id)}')">View</button></td>
+                    </tr>`).join('');
+            } catch (e) {
+                const tbody = document.getElementById('conversationsBody');
+                if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="color:#dc2626;text-align:center">Failed to load conversations</td></tr>';
+            }
+        }
+
+        async function viewConversation(sid) {
+            const modal = document.getElementById('convoModal');
+            const body = document.getElementById('convoModalBody');
+            if (!modal || !body) return;
+            body.innerHTML = '<p style="text-align:center;color:#9ca3af;padding:20px;">Loading…</p>';
+            modal.hidden = false;
+            try {
+                const res = await fetch(API_BASE + '/api/admin/conversations/' + sid, {
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')}
+                });
+                const data = await res.json();
+                const msgs = data.messages || [];
+                if (!msgs.length) { body.innerHTML = '<p style="text-align:center;color:#9ca3af;padding:20px;">No messages.</p>'; return; }
+                body.innerHTML = msgs.map(m => `
+                    <div class="convo-msg convo-msg--${m.role === 'user' ? 'user' : 'bot'}">
+                        <div class="convo-bubble">${escapeHtml(m.content || '')}</div>
+                        <div class="convo-time">${escapeHtml(m.role)} · ${escapeHtml(fmtDate(m.created_at))}</div>
+                    </div>`).join('');
+                body.scrollTop = 0;
+            } catch (e) {
+                body.innerHTML = '<p style="text-align:center;color:#dc2626;padding:20px;">Failed to load.</p>';
+            }
+        }
+        function closeConvoModal() { const m = document.getElementById('convoModal'); if (m) m.hidden = true; }
+        document.getElementById('convoModalClose')?.addEventListener('click', closeConvoModal);
+        document.getElementById('convoModalBackdrop')?.addEventListener('click', closeConvoModal);
+
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text == null ? '' : text;
@@ -367,6 +477,7 @@
             loadStats();
             loadAiProviders();
             loadUsers();
+            loadConversations();
         }
 
         // ── AI Provider Management ───────────────────────────────
@@ -479,6 +590,20 @@
         }
     </script>
     <style>
+        .convo-modal { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center; }
+        .convo-modal[hidden] { display: none; }
+        .convo-modal-backdrop { position: absolute; inset: 0; background: rgba(15,23,42,0.5); }
+        .convo-modal-card { position: relative; width: min(560px, calc(100vw - 24px)); max-height: 80vh; background: var(--bg-primary,#fff); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); display: flex; flex-direction: column; overflow: hidden; }
+        .convo-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--divider,#e5e7eb); font-weight: 700; }
+        .convo-modal-close { background: none; border: none; font-size: 16px; cursor: pointer; color: var(--text-secondary,#6b7280); }
+        .convo-modal-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        .convo-msg { display: flex; flex-direction: column; max-width: 85%; }
+        .convo-msg--user { align-self: flex-end; align-items: flex-end; }
+        .convo-msg--bot { align-self: flex-start; align-items: flex-start; }
+        .convo-bubble { padding: 9px 13px; border-radius: 14px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+        .convo-msg--user .convo-bubble { background: #065f46; color: #fff; border-bottom-right-radius: 4px; }
+        .convo-msg--bot .convo-bubble { background: var(--bg-secondary,#f3f4f6); color: var(--text-primary,#111); border-bottom-left-radius: 4px; }
+        .convo-time { font-size: 10px; color: #9ca3af; margin-top: 3px; }
         .ai-status-badge { display:inline-block; padding:3px 8px; border-radius:12px; font-size:11px; font-weight:600; white-space:nowrap; }
         .ai-status-ok      { background:#d1fae5; color:#065f46; }
         .ai-status-error   { background:#fee2e2; color:#991b1b; }

@@ -404,6 +404,19 @@ class Database:
                         used       BOOLEAN DEFAULT FALSE
                     );
                 """)
+                # AI assistant chat logs (for the admin Conversations view)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS chat_messages (
+                        id         SERIAL PRIMARY KEY,
+                        session_id VARCHAR(64) NOT NULL,
+                        user_id    INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+                        role       VARCHAR(12) NOT NULL,
+                        content    TEXT,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages (session_id, created_at);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_messages (created_at);")
                 cur.execute("""
                     INSERT INTO processed_telegram_messages (telegram_id, telegram_channel)
                     SELECT DISTINCT telegram_id, telegram_channel
@@ -2227,6 +2240,133 @@ class Database:
                 return int(cur.fetchone()[0] or 0)
         except Exception as e:
             logger.warning("count_users_since failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return 0
+
+    # ================================================================
+    # AI ASSISTANT CHAT LOGS
+    # ================================================================
+
+    def log_chat_message(self, session_id, role, content, user_id=None) -> None:
+        """Persist one chat message (user or assistant) for the admin Conversations view."""
+        if not session_id or not content:
+            return
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (%s, %s, %s, %s)",
+                    (str(session_id)[:64], (int(user_id) if user_id else None), (role or "user")[:12], str(content)[:8000]),
+                )
+            self.conn.commit()
+        except Exception as e:
+            logger.warning("log_chat_message failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+
+    def list_chat_conversations(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Conversations (grouped by session) for the admin dashboard, newest activity first."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT t.session_id, t.started_at, t.last_at, t.message_count, t.user_id,
+                           u.first_name, u.last_name, u.username, u.email, u.auth_provider,
+                           (SELECT content FROM chat_messages m
+                            WHERE m.session_id = t.session_id AND m.role = 'user'
+                            ORDER BY m.created_at ASC LIMIT 1) AS first_user_message
+                    FROM (
+                        SELECT session_id,
+                               MIN(created_at) AS started_at,
+                               MAX(created_at) AS last_at,
+                               COUNT(*)        AS message_count,
+                               MAX(user_id)    AS user_id
+                        FROM chat_messages
+                        GROUP BY session_id
+                    ) t
+                    LEFT JOIN users u ON u.user_id = t.user_id
+                    ORDER BY t.last_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (limit, offset),
+                )
+                rows = cur.fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                for k in ("started_at", "last_at"):
+                    if d.get(k) and hasattr(d[k], "isoformat"):
+                        d[k] = d[k].isoformat()
+                out.append(d)
+            return out
+        except Exception as e:
+            logger.warning("list_chat_conversations failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return []
+
+    def get_chat_conversation(self, session_id) -> List[Dict[str, Any]]:
+        """All messages in one conversation, oldest first."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT role, content, created_at FROM chat_messages WHERE session_id = %s ORDER BY created_at ASC",
+                    (str(session_id)[:64],),
+                )
+                rows = cur.fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                if d.get("created_at") and hasattr(d["created_at"], "isoformat"):
+                    d["created_at"] = d["created_at"].isoformat()
+                out.append(d)
+            return out
+        except Exception as e:
+            logger.warning("get_chat_conversation failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return []
+
+    def count_chat_conversations(self) -> int:
+        """Distinct conversation count."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT COUNT(DISTINCT session_id) FROM chat_messages")
+                return int(cur.fetchone()[0] or 0)
+        except Exception as e:
+            logger.warning("count_chat_conversations failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return 0
+
+    def delete_old_chat_messages(self, days: int = 90) -> int:
+        """Retention: delete chat messages older than `days`. Returns rows deleted."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM chat_messages WHERE created_at < NOW() - INTERVAL %s",
+                    (f"{int(days)} days",),
+                )
+                deleted = cur.rowcount
+            self.conn.commit()
+            return deleted or 0
+        except Exception as e:
+            logger.warning("delete_old_chat_messages failed: %s", e)
             try:
                 self.conn.rollback()
             except Exception:

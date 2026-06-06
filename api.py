@@ -242,6 +242,22 @@ def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(secu
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
+def _optional_user_id(authorization: Optional[str]) -> Optional[int]:
+    """Best-effort user id from a Bearer token; returns None if absent/invalid (no error)."""
+    if not authorization or not JWT_AVAILABLE:
+        return None
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    try:
+        payload = jwt.decode(parts[1], JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("sub") == "user" and "uid" in payload:
+            return int(payload["uid"])
+    except Exception:
+        return None
+    return None
+
+
 async def _keep_alive():
     """Self-ping the public URL so Render's free tier never spins down.
 
@@ -294,12 +310,27 @@ async def _init_db_with_retry():
             await asyncio.sleep(15)
 
 
+async def _schedule_chat_cleanup():
+    """Delete chat logs older than CHAT_RETENTION_DAYS once a day (keeps storage flat)."""
+    import asyncio
+    days = int(os.getenv("CHAT_RETENTION_DAYS", "90"))
+    while True:
+        await asyncio.sleep(24 * 3600)
+        try:
+            n = await asyncio.to_thread(db.delete_old_chat_messages, days)
+            if n:
+                logger.info("Chat retention: deleted %d message(s) older than %d days", n, days)
+        except Exception as e:
+            logger.warning("Chat cleanup failed: %s", e)
+
+
 @app.on_event("startup")
 async def startup():
     import asyncio
     asyncio.create_task(_init_db_with_retry())
     asyncio.create_task(_schedule_daily_digest())
     asyncio.create_task(_schedule_expired_cleanup())
+    asyncio.create_task(_schedule_chat_cleanup())
     asyncio.create_task(_keep_alive())
 
 
@@ -1051,6 +1082,7 @@ class ChatRequest(BaseModel):
     history: _List[ChatMessage] = []
     cv_text: str = ""
     user_name: str = ""
+    session_id: str = ""
 
 
 def _search_jobs_smart(message: str = "", cv_text: str = "", limit: int = 6) -> list:
@@ -1087,10 +1119,11 @@ def _search_jobs_smart(message: str = "", cv_text: str = "", limit: int = 6) -> 
 
 
 @app.post("/api/assistant/chat")
-async def assistant_chat(req: ChatRequest):
+async def assistant_chat(req: ChatRequest, authorization: str = Header(None)):
     """AI job assistant chat. Searches real jobs and responds with Gemini."""
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message is required")
+    uid = _optional_user_id(authorization)
 
     jobs = _search_jobs_smart(message=req.message, cv_text=req.cv_text)
     jobs_context = _jobs_to_context(jobs)
@@ -1108,6 +1141,12 @@ async def assistant_chat(req: ChatRequest):
     messages.append({"role": "user", "content": req.message})
 
     reply = _gemini_chat(messages, system=system)
+
+    # Log the exchange for the admin Conversations view (best-effort)
+    if req.session_id.strip():
+        sid = req.session_id.strip()
+        db.log_chat_message(sid, "user", req.message, uid)
+        db.log_chat_message(sid, "assistant", reply, uid)
 
     # Return reply + job cards for the frontend to display
     return {
@@ -1319,6 +1358,29 @@ async def admin_users(page: int = 1, per_page: int = 50, username: str = Depends
         "per_page": per_page,
         "pages": max(1, (total + per_page - 1) // per_page),
     }
+
+
+@app.get("/api/admin/conversations")
+async def admin_conversations(page: int = 1, per_page: int = 50, username: str = Depends(verify_token)):
+    """AI assistant conversations (grouped by session) for the admin dashboard."""
+    page = max(1, page)
+    per_page = min(200, max(1, per_page))
+    offset = (page - 1) * per_page
+    convos = db.list_chat_conversations(limit=per_page, offset=offset)
+    total = db.count_chat_conversations()
+    return {
+        "conversations": convos,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": max(1, (total + per_page - 1) // per_page),
+    }
+
+
+@app.get("/api/admin/conversations/{session_id}")
+async def admin_conversation_detail(session_id: str, username: str = Depends(verify_token)):
+    """All messages in one conversation."""
+    return {"messages": db.get_chat_conversation(session_id)}
 
 
 # ── AI Provider Management ──────────────────────────────────────────────────
