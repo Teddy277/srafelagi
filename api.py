@@ -867,6 +867,26 @@ def _get_post_price() -> int:
         return 100
 
 
+def _notify_admin_submission(company: str, title: str, price: int) -> None:
+    """DM the admin on Telegram about a new job-post submission (best-effort, blocking)."""
+    chat_id = (db.get_setting("admin_telegram_chat_id", "") or os.getenv("ADMIN_TELEGRAM_CHAT_ID", "")).strip()
+    if not chat_id:
+        return
+    try:
+        import telegram_webhook as tg
+        fee = f"{price} birr" if price > 0 else "Free"
+        text = (
+            "🆕 *New job post submitted*\n\n"
+            f"🏢 {company}\n"
+            f"💼 {title}\n"
+            f"💳 Fee: {fee}\n\n"
+            f"Review & approve: {SITE_BASE_URL}/admin/dashboard.html"
+        )
+        tg.send_message(int(chat_id), text)
+    except Exception as e:
+        logger.warning("admin submission notify failed: %s", e)
+
+
 @app.get("/api/post-job/config")
 async def post_job_config():
     """Public: posting price + payment instructions (drives the Post a Job form)."""
@@ -929,6 +949,12 @@ async def post_job(
     sid = db.add_job_submission(sub)
     if not sid:
         raise HTTPException(status_code=500, detail="Could not submit. Please try again.")
+    # Alert the admin on Telegram (fire-and-forget so the company's submit stays fast)
+    try:
+        import asyncio
+        asyncio.create_task(asyncio.to_thread(_notify_admin_submission, company, title, price))
+    except Exception:
+        pass
     return {"ok": True, "message": "Submitted! Your job will appear on the site once an admin approves it."}
 
 
@@ -1463,11 +1489,16 @@ async def admin_conversation_detail(session_id: str, username: str = Depends(ver
 class PostConfigRequest(BaseModel):
     price_birr: int = 100
     payment_info: str = ""
+    notify_chat_id: str = ""
 
 
 @app.get("/api/admin/post-config")
 async def admin_get_post_config(username: str = Depends(verify_token)):
-    return {"price_birr": _get_post_price(), "payment_info": db.get_setting("job_post_payment_info", "") or ""}
+    return {
+        "price_birr": _get_post_price(),
+        "payment_info": db.get_setting("job_post_payment_info", "") or "",
+        "notify_chat_id": db.get_setting("admin_telegram_chat_id", "") or "",
+    }
 
 
 @app.post("/api/admin/post-config")
@@ -1475,6 +1506,7 @@ async def admin_set_post_config(req: PostConfigRequest, username: str = Depends(
     price = max(0, int(req.price_birr or 0))
     db.set_setting("job_post_price", str(price))
     db.set_setting("job_post_payment_info", (req.payment_info or "").strip()[:1000])
+    db.set_setting("admin_telegram_chat_id", (req.notify_chat_id or "").strip()[:32])
     return {"ok": True, "price_birr": price}
 
 

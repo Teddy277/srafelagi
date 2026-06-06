@@ -208,6 +208,8 @@ def handle_update(update: dict, db) -> None:
     cmd, arg = _split(text)
     if cmd in ("start", "help"):
         send_message(chat_id, HELP_TEXT)
+    elif cmd in ("id", "myid", "chatid"):
+        send_message(chat_id, f"Your Telegram chat ID is: `{chat_id}`\n\nPaste it into the admin dashboard to receive new job-post alerts here.")
     elif cmd in ("search", "jobs"):
         _do_search(chat_id, arg, db)
     elif cmd == "category":

@@ -198,8 +198,13 @@
                             <label class="post-config-label">Payment instructions (shown when price &gt; 0)</label>
                             <textarea id="postPayInfo" rows="2" class="post-config-input" placeholder="e.g. Pay to Telebirr 09xxxxxxxx, then upload the screenshot."></textarea>
                         </div>
+                        <div>
+                            <label class="post-config-label">Telegram chat ID for new-post alerts</label>
+                            <input type="text" id="postNotifyId" class="post-config-input" style="width:200px;" placeholder="send /id to the bot">
+                        </div>
                         <button type="button" class="btn btn-primary" onclick="savePostConfig()">Save</button>
                     </div>
+                    <p class="post-config-hint">Get your ID: open <strong>@srafelagi1_bot</strong> in Telegram and send <code>/id</code>. Paste it above to be DM'd when a company submits a job.</p>
                     <div id="postConfigMsg" class="post-config-msg"></div>
                 </section>
 
@@ -495,18 +500,20 @@
                 const d = await res.json();
                 document.getElementById('postPriceInput').value = d.price_birr ?? 100;
                 document.getElementById('postPayInfo').value = d.payment_info || '';
+                document.getElementById('postNotifyId').value = d.notify_chat_id || '';
             } catch (e) {}
         }
         async function savePostConfig() {
             const msgEl = document.getElementById('postConfigMsg');
             const price = parseInt(document.getElementById('postPriceInput').value || '0', 10) || 0;
             const info = document.getElementById('postPayInfo').value || '';
+            const notifyId = document.getElementById('postNotifyId').value || '';
             msgEl.textContent = 'Saving…'; msgEl.style.color = '#6b7280';
             try {
                 const res = await fetch(API_BASE + '/api/admin/post-config', {
                     method: 'POST',
                     headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || ''), 'Content-Type': 'application/json'},
-                    body: JSON.stringify({ price_birr: price, payment_info: info })
+                    body: JSON.stringify({ price_birr: price, payment_info: info, notify_chat_id: notifyId })
                 });
                 if (res.ok) { msgEl.textContent = 'Saved. New posts will use ' + (price > 0 ? price + ' birr.' : 'free posting.'); msgEl.style.color = '#047857'; }
                 else { msgEl.textContent = 'Failed to save.'; msgEl.style.color = '#dc2626'; }
@@ -760,6 +767,8 @@
         .post-config-input { padding: 9px 12px; border: 1px solid var(--divider,#e5e7eb); border-radius: 8px; font-family: inherit; font-size: 14px; }
         textarea.post-config-input { width: 100%; resize: vertical; }
         .post-config-msg { font-size: 13px; margin-top: 8px; }
+        .post-config-hint { font-size: 12px; color: #6b7280; margin-top: 10px; }
+        .post-config-hint code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
         .ai-status-badge { display:inline-block; padding:3px 8px; border-radius:12px; font-size:11px; font-weight:600; white-space:nowrap; }
         .ai-status-ok      { background:#d1fae5; color:#065f46; }
         .ai-status-error   { background:#fee2e2; color:#991b1b; }
