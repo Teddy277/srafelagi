@@ -417,6 +417,35 @@ class Database:
                 """)
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages (session_id, created_at);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_messages (created_at);")
+                # Admin-editable settings (job post price, payment info, etc.)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS settings (
+                        key        VARCHAR(64) PRIMARY KEY,
+                        value      TEXT,
+                        updated_at TIMESTAMP DEFAULT NOW()
+                    );
+                """)
+                # Company job-post submissions (pending admin approval)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS job_submissions (
+                        id            SERIAL PRIMARY KEY,
+                        company       VARCHAR(255),
+                        contact_email VARCHAR(255),
+                        title         VARCHAR(500),
+                        location      VARCHAR(255),
+                        description   TEXT,
+                        deadline_text VARCHAR(255),
+                        salary        VARCHAR(255),
+                        apply_url     TEXT,
+                        apply_email   VARCHAR(255),
+                        payment_proof TEXT,
+                        price_birr    INTEGER DEFAULT 0,
+                        status        VARCHAR(20) DEFAULT 'pending',
+                        job_id        INTEGER,
+                        created_at    TIMESTAMP DEFAULT NOW(),
+                        reviewed_at   TIMESTAMP
+                    );
+                """)
                 cur.execute("""
                     INSERT INTO processed_telegram_messages (telegram_id, telegram_channel)
                     SELECT DISTINCT telegram_id, telegram_channel
@@ -2372,6 +2401,222 @@ class Database:
             except Exception:
                 pass
             return 0
+
+    # ================================================================
+    # SETTINGS + COMPANY JOB SUBMISSIONS
+    # ================================================================
+
+    def get_setting(self, key: str, default=None):
+        """Read an admin setting; returns default if unset."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
+                row = cur.fetchone()
+            return row[0] if row and row[0] is not None else default
+        except Exception as e:
+            logger.warning("get_setting failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return default
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Create/update an admin setting."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO settings (key, value, updated_at) VALUES (%s, %s, NOW())
+                       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()""",
+                    (key, value),
+                )
+            self.conn.commit()
+        except Exception as e:
+            logger.warning("set_setting failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+
+    def add_job_submission(self, data: Dict[str, Any]) -> Optional[int]:
+        """Store a company's pending job-post submission. Returns its id."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO job_submissions
+                       (company, contact_email, title, location, description, deadline_text,
+                        salary, apply_url, apply_email, payment_proof, price_birr, status)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                       RETURNING id""",
+                    (data.get("company"), data.get("contact_email"), data.get("title"),
+                     data.get("location"), data.get("description"), data.get("deadline_text"),
+                     data.get("salary"), data.get("apply_url"), data.get("apply_email"),
+                     data.get("payment_proof"), int(data.get("price_birr") or 0)),
+                )
+                row = cur.fetchone()
+            self.conn.commit()
+            return row[0] if row else None
+        except Exception as e:
+            logger.warning("add_job_submission failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return None
+
+    def list_job_submissions(self, status: Optional[str] = "pending", limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
+        """List submissions (without the heavy proof blob). status=None for all."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, company, contact_email, title, location, deadline_text, salary,
+                           apply_url, apply_email, price_birr, status, job_id, created_at, reviewed_at,
+                           (payment_proof IS NOT NULL) AS has_proof
+                    FROM job_submissions
+                    WHERE (%s IS NULL OR status = %s)
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (status, status, limit, offset),
+                )
+                rows = cur.fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                for k in ("created_at", "reviewed_at"):
+                    if d.get(k) and hasattr(d[k], "isoformat"):
+                        d[k] = d[k].isoformat()
+                out.append(d)
+            return out
+        except Exception as e:
+            logger.warning("list_job_submissions failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return []
+
+    def get_job_submission(self, sid: int) -> Optional[Dict[str, Any]]:
+        """Full submission row (including proof)."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM job_submissions WHERE id = %s", (int(sid),))
+                row = cur.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.warning("get_job_submission failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return None
+
+    def get_submission_proof(self, sid: int) -> Optional[str]:
+        """The payment-proof data URL for a submission."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT payment_proof FROM job_submissions WHERE id = %s", (int(sid),))
+                row = cur.fetchone()
+            return row[0] if row else None
+        except Exception as e:
+            logger.warning("get_submission_proof failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return None
+
+    def count_pending_submissions(self) -> int:
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM job_submissions WHERE status = 'pending'")
+                return int(cur.fetchone()[0] or 0)
+        except Exception as e:
+            logger.warning("count_pending_submissions failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return 0
+
+    def set_submission_status(self, sid: int, status: str, job_id: Optional[int] = None, clear_proof: bool = False) -> None:
+        """Update a submission's status (and link the published job / drop the proof)."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                if clear_proof:
+                    cur.execute(
+                        "UPDATE job_submissions SET status=%s, job_id=COALESCE(%s, job_id), reviewed_at=NOW(), payment_proof=NULL WHERE id=%s",
+                        (status, job_id, int(sid)),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE job_submissions SET status=%s, job_id=COALESCE(%s, job_id), reviewed_at=NOW() WHERE id=%s",
+                        (status, job_id, int(sid)),
+                    )
+            self.conn.commit()
+        except Exception as e:
+            logger.warning("set_submission_status failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+
+    def reject_job_submission(self, sid: int) -> bool:
+        """Delete a submission (reject)."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("DELETE FROM job_submissions WHERE id = %s", (int(sid),))
+                self.conn.commit()
+                return cur.rowcount > 0
+        except Exception as e:
+            logger.warning("reject_job_submission failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return False
+
+    def create_posted_job(self, sub: Dict[str, Any]) -> Optional[int]:
+        """Publish an approved submission as a real job (direct insert, appears at the top)."""
+        self._ensure_connection()
+        apply_type = None
+        if sub.get("apply_url"):
+            apply_type = "link"
+        elif sub.get("apply_email"):
+            apply_type = "email"
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO jobs
+                       (title, company, location, description, deadline_text, salary,
+                        apply_url, apply_email, apply_type, created_at, updated_at)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+                       RETURNING id""",
+                    (clean_text(sub.get("title")), clean_text(sub.get("company")), clean_text(sub.get("location")),
+                     clean_text(sub.get("description")), sub.get("deadline_text"), sub.get("salary"),
+                     sub.get("apply_url"), sub.get("apply_email"), apply_type),
+                )
+                jid = cur.fetchone()[0]
+            self.conn.commit()
+            logger.info("Published company job #%s from submission", jid)
+            return jid
+        except Exception as e:
+            logger.error("create_posted_job failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return None
 
     def close(self):
         """Close database connection"""

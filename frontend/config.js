@@ -11,4 +11,4 @@ window.SRAFELAGI_BOT_USERNAME = "Srafelagi1_bot";
 // (APIs & Services -> Credentials -> OAuth client ID -> Web application) and add
 // your site to "Authorized JavaScript origins". This value is public, not a secret.
 // Must also be set as the GOOGLE_CLIENT_ID env var on the server (same value).
-window.SRAFELAGI_GOOGLE_CLIENT_ID = "";
+window.SRAFELAGI_GOOGLE_CLIENT_ID = "681790307026-a9l8lgvgeopn4ke6dlhk459nf12pdah4.apps.googleusercontent.com";

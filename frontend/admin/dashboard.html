@@ -186,6 +186,40 @@
                         <p id="conversationsEmpty" class="top-jobs-empty" style="display:none;">No conversations yet.</p>
                     </div>
                 </section>
+
+                <section class="dashboard-section">
+                    <h2 class="dashboard-section-title">Job posting price</h2>
+                    <div class="post-config-row">
+                        <div>
+                            <label class="post-config-label">Price (birr) — set 0 for free</label>
+                            <input type="number" id="postPriceInput" min="0" step="1" class="post-config-input" style="width:140px;">
+                        </div>
+                        <div style="flex:1; min-width:240px;">
+                            <label class="post-config-label">Payment instructions (shown when price &gt; 0)</label>
+                            <textarea id="postPayInfo" rows="2" class="post-config-input" placeholder="e.g. Pay to Telebirr 09xxxxxxxx, then upload the screenshot."></textarea>
+                        </div>
+                        <button type="button" class="btn btn-primary" onclick="savePostConfig()">Save</button>
+                    </div>
+                    <div id="postConfigMsg" class="post-config-msg"></div>
+                </section>
+
+                <section class="dashboard-section">
+                    <h2 class="dashboard-section-title">Company Job Submissions <span id="pendingBadge"></span></h2>
+                    <div class="top-jobs-wrapper">
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th><th>Company</th><th>Title</th><th>Fee</th>
+                                    <th>Proof</th><th>Status</th><th>Date</th><th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="submissionsBody">
+                                <tr><td colspan="8" class="top-jobs-loading">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                        <p id="submissionsEmpty" class="top-jobs-empty" style="display:none;">No pending submissions.</p>
+                    </div>
+                </section>
                 <div class="admin-actions">
                     <button type="button" class="btn btn-danger" onclick="deleteExpired()">
                         <i class="fas fa-trash"></i> Delete Expired Jobs
@@ -232,6 +266,20 @@
                 <button type="button" id="convoModalClose" class="convo-modal-close" aria-label="Close">✕</button>
             </div>
             <div id="convoModalBody" class="convo-modal-body"></div>
+        </div>
+    </div>
+
+    <!-- Payment proof viewer -->
+    <div id="proofModal" class="convo-modal" hidden>
+        <div class="convo-modal-backdrop" id="proofModalBackdrop"></div>
+        <div class="convo-modal-card" style="max-width:520px;">
+            <div class="convo-modal-head">
+                <span>Payment proof</span>
+                <button type="button" id="proofModalClose" class="convo-modal-close" aria-label="Close">✕</button>
+            </div>
+            <div class="convo-modal-body" style="align-items:center;">
+                <img id="proofImg" alt="payment proof" style="max-width:100%;border-radius:8px;">
+            </div>
         </div>
     </div>
 
@@ -437,6 +485,107 @@
         document.getElementById('convoModalClose')?.addEventListener('click', closeConvoModal);
         document.getElementById('convoModalBackdrop')?.addEventListener('click', closeConvoModal);
 
+        // ── Job posting price config ─────────────────────────────
+        async function loadPostConfig() {
+            try {
+                const res = await fetch(API_BASE + '/api/admin/post-config', {
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')}
+                });
+                if (!res.ok) return;
+                const d = await res.json();
+                document.getElementById('postPriceInput').value = d.price_birr ?? 100;
+                document.getElementById('postPayInfo').value = d.payment_info || '';
+            } catch (e) {}
+        }
+        async function savePostConfig() {
+            const msgEl = document.getElementById('postConfigMsg');
+            const price = parseInt(document.getElementById('postPriceInput').value || '0', 10) || 0;
+            const info = document.getElementById('postPayInfo').value || '';
+            msgEl.textContent = 'Saving…'; msgEl.style.color = '#6b7280';
+            try {
+                const res = await fetch(API_BASE + '/api/admin/post-config', {
+                    method: 'POST',
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || ''), 'Content-Type': 'application/json'},
+                    body: JSON.stringify({ price_birr: price, payment_info: info })
+                });
+                if (res.ok) { msgEl.textContent = 'Saved. New posts will use ' + (price > 0 ? price + ' birr.' : 'free posting.'); msgEl.style.color = '#047857'; }
+                else { msgEl.textContent = 'Failed to save.'; msgEl.style.color = '#dc2626'; }
+            } catch (e) { msgEl.textContent = 'Error saving.'; msgEl.style.color = '#dc2626'; }
+        }
+
+        // ── Company job submissions ──────────────────────────────
+        async function loadSubmissions() {
+            try {
+                const res = await fetch(API_BASE + '/api/admin/submissions?status=pending', {
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')}
+                });
+                if (res.status === 401) return;
+                if (!res.ok) throw new Error('Failed');
+                const data = await res.json();
+                const badge = document.getElementById('pendingBadge');
+                if (badge) badge.textContent = data.pending_count ? '(' + data.pending_count + ' pending)' : '';
+                const subs = data.submissions || [];
+                const tbody = document.getElementById('submissionsBody');
+                const emptyEl = document.getElementById('submissionsEmpty');
+                if (!subs.length) { tbody.innerHTML = ''; if (emptyEl) emptyEl.style.display = 'block'; return; }
+                if (emptyEl) emptyEl.style.display = 'none';
+                tbody.innerHTML = subs.map((s, i) => `
+                    <tr>
+                        <td>${i + 1}</td>
+                        <td>${escapeHtml(s.company || '—')}<br><span style="color:#9ca3af;font-size:11px;">${escapeHtml(s.contact_email || '')}</span></td>
+                        <td>${escapeHtml(s.title || '—')}</td>
+                        <td>${s.price_birr > 0 ? (s.price_birr + ' birr') : 'Free'}</td>
+                        <td>${s.has_proof ? `<button class="btn btn-small btn-secondary" onclick="viewProof(${s.id})">View</button>` : '—'}</td>
+                        <td>${escapeHtml(s.status || '')}</td>
+                        <td>${escapeHtml(fmtDate(s.created_at))}</td>
+                        <td style="white-space:nowrap;">
+                            <button class="btn btn-small btn-primary" onclick="approveSubmission(${s.id})">Approve</button>
+                            <button class="btn btn-small btn-danger" onclick="rejectSubmission(${s.id})">Reject</button>
+                        </td>
+                    </tr>`).join('');
+            } catch (e) {
+                const tbody = document.getElementById('submissionsBody');
+                if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="color:#dc2626;text-align:center">Failed to load submissions</td></tr>';
+            }
+        }
+        async function approveSubmission(id) {
+            if (!confirm('Approve and publish this job?')) return;
+            try {
+                const res = await fetch(API_BASE + '/api/admin/submissions/' + id + '/approve', {
+                    method: 'POST',
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')}
+                });
+                const d = await res.json().catch(() => ({}));
+                if (res.ok) { alert('Published! Job #' + (d.job_id || '') + ' is now live.'); loadSubmissions(); loadStats(); }
+                else { alert(d.detail || 'Failed to approve'); }
+            } catch (e) { alert('Error: ' + e.message); }
+        }
+        async function rejectSubmission(id) {
+            if (!confirm('Reject and delete this submission?')) return;
+            try {
+                const res = await fetch(API_BASE + '/api/admin/submissions/' + id + '/reject', {
+                    method: 'POST',
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')}
+                });
+                if (res.ok) loadSubmissions(); else alert('Failed to reject');
+            } catch (e) { alert('Error: ' + e.message); }
+        }
+        async function viewProof(id) {
+            const modal = document.getElementById('proofModal'), img = document.getElementById('proofImg');
+            img.removeAttribute('src');
+            modal.hidden = false;
+            try {
+                const res = await fetch(API_BASE + '/api/admin/submissions/' + id + '/proof', {
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')}
+                });
+                const d = await res.json();
+                if (d.proof) img.src = d.proof;
+            } catch (e) {}
+        }
+        function closeProofModal() { const m = document.getElementById('proofModal'); if (m) m.hidden = true; }
+        document.getElementById('proofModalClose')?.addEventListener('click', closeProofModal);
+        document.getElementById('proofModalBackdrop')?.addEventListener('click', closeProofModal);
+
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text == null ? '' : text;
@@ -478,6 +627,8 @@
             loadAiProviders();
             loadUsers();
             loadConversations();
+            loadPostConfig();
+            loadSubmissions();
         }
 
         // ── AI Provider Management ───────────────────────────────
@@ -604,6 +755,11 @@
         .convo-msg--user .convo-bubble { background: #065f46; color: #fff; border-bottom-right-radius: 4px; }
         .convo-msg--bot .convo-bubble { background: var(--bg-secondary,#f3f4f6); color: var(--text-primary,#111); border-bottom-left-radius: 4px; }
         .convo-time { font-size: 10px; color: #9ca3af; margin-top: 3px; }
+        .post-config-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+        .post-config-label { display: block; font-size: 13px; color: #6b7280; margin-bottom: 4px; }
+        .post-config-input { padding: 9px 12px; border: 1px solid var(--divider,#e5e7eb); border-radius: 8px; font-family: inherit; font-size: 14px; }
+        textarea.post-config-input { width: 100%; resize: vertical; }
+        .post-config-msg { font-size: 13px; margin-top: 8px; }
         .ai-status-badge { display:inline-block; padding:3px 8px; border-radius:12px; font-size:11px; font-weight:600; white-space:nowrap; }
         .ai-status-ok      { background:#d1fae5; color:#065f46; }
         .ai-status-error   { background:#fee2e2; color:#991b1b; }

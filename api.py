@@ -17,7 +17,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Request
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse, Response, HTMLResponse
@@ -182,7 +182,8 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
 
 # ── Social login (no password) ───────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or "").strip()
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+# Public OAuth client id (safe to embed). Env var overrides if set.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "681790307026-a9l8lgvgeopn4ke6dlhk459nf12pdah4.apps.googleusercontent.com").strip()
 USER_SESSION_DAYS = int(os.getenv("USER_SESSION_DAYS", "60"))
 
 
@@ -857,9 +858,83 @@ async def unsave_job_for_user(job_id: int, uid: int = Depends(get_current_user_i
     return {"ok": True}
 
 
+# ============ COMPANY "POST A JOB" ============
+
+def _get_post_price() -> int:
+    try:
+        return max(0, int(db.get_setting("job_post_price", "100") or "100"))
+    except Exception:
+        return 100
+
+
+@app.get("/api/post-job/config")
+async def post_job_config():
+    """Public: posting price + payment instructions (drives the Post a Job form)."""
+    return {"price_birr": _get_post_price(), "payment_info": db.get_setting("job_post_payment_info", "") or ""}
+
+
+@app.post("/api/post-job")
+async def post_job(
+    request: Request,
+    company: str = Form(...),
+    contact_email: str = Form(...),
+    title: str = Form(...),
+    description: str = Form(...),
+    location: str = Form(""),
+    deadline: str = Form(""),
+    salary: str = Form(""),
+    apply_url: str = Form(""),
+    apply_email: str = Form(""),
+    payment_proof: UploadFile = File(None),
+):
+    """Company submits a job (pending admin approval). Requires a payment screenshot when price > 0."""
+    if not _rate_limiter.is_allowed(_get_client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many requests. Please wait a minute.")
+    company = (company or "").strip()
+    contact_email = (contact_email or "").strip().lower()
+    title = (title or "").strip()
+    description = (description or "").strip()
+    if not company or not title or len(description) < 20 or "@" not in contact_email:
+        raise HTTPException(status_code=400, detail="Please fill company, a valid email, title, and a description (20+ chars).")
+
+    price = _get_post_price()
+    proof_data = None
+    if price > 0:
+        if payment_proof is None or not payment_proof.filename:
+            raise HTTPException(status_code=400, detail="A payment screenshot is required.")
+        raw = await payment_proof.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="The screenshot file is empty.")
+        if len(raw) > 3 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Screenshot too large (max 3MB).")
+        ct = (payment_proof.content_type or "").lower()
+        if not ct.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Please upload an image screenshot.")
+        import base64
+        proof_data = f"data:{ct};base64," + base64.b64encode(raw).decode()
+
+    sub = {
+        "company": company[:255],
+        "contact_email": contact_email[:255],
+        "title": title[:500],
+        "location": (location or "").strip()[:255] or None,
+        "description": description,
+        "deadline_text": (deadline or "").strip()[:255] or None,
+        "salary": (salary or "").strip()[:255] or None,
+        "apply_url": (apply_url or "").strip() or None,
+        "apply_email": ((apply_email or "").strip().lower() or contact_email)[:255],
+        "payment_proof": proof_data,
+        "price_birr": price,
+    }
+    sid = db.add_job_submission(sub)
+    if not sid:
+        raise HTTPException(status_code=500, detail="Could not submit. Please try again.")
+    return {"ok": True, "message": "Submitted! Your job will appear on the site once an admin approves it."}
+
+
 # ============ AI ASSISTANT ============
 
-from fastapi import UploadFile, File
+from fastapi import UploadFile, File, Form
 from typing import List as _List
 
 ASSISTANT_SYSTEM_PROMPT = """You are Srafelagi AI, the official AI assistant of Srafelagi — Ethiopia's smart job board.
@@ -1383,6 +1458,64 @@ async def admin_conversation_detail(session_id: str, username: str = Depends(ver
     return {"messages": db.get_chat_conversation(session_id)}
 
 
+# ── Company job submissions (admin) ──────────────────────────────────────────
+
+class PostConfigRequest(BaseModel):
+    price_birr: int = 100
+    payment_info: str = ""
+
+
+@app.get("/api/admin/post-config")
+async def admin_get_post_config(username: str = Depends(verify_token)):
+    return {"price_birr": _get_post_price(), "payment_info": db.get_setting("job_post_payment_info", "") or ""}
+
+
+@app.post("/api/admin/post-config")
+async def admin_set_post_config(req: PostConfigRequest, username: str = Depends(verify_token)):
+    price = max(0, int(req.price_birr or 0))
+    db.set_setting("job_post_price", str(price))
+    db.set_setting("job_post_payment_info", (req.payment_info or "").strip()[:1000])
+    return {"ok": True, "price_birr": price}
+
+
+@app.get("/api/admin/submissions")
+async def admin_list_submissions(status: str = "pending", username: str = Depends(verify_token)):
+    status = (status or "pending").strip().lower()
+    filt = None if status == "all" else status
+    return {
+        "submissions": db.list_job_submissions(status=filt, limit=200),
+        "pending_count": db.count_pending_submissions(),
+    }
+
+
+@app.get("/api/admin/submissions/{sid}/proof")
+async def admin_submission_proof(sid: int, username: str = Depends(verify_token)):
+    proof = db.get_submission_proof(sid)
+    if not proof:
+        raise HTTPException(status_code=404, detail="No payment proof for this submission")
+    return {"proof": proof}
+
+
+@app.post("/api/admin/submissions/{sid}/approve")
+async def admin_approve_submission(sid: int, username: str = Depends(verify_token)):
+    sub = db.get_job_submission(sid)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    if sub.get("status") == "approved" and sub.get("job_id"):
+        return {"ok": True, "job_id": sub.get("job_id"), "message": "Already approved"}
+    job_id = db.create_posted_job(sub)
+    if not job_id:
+        raise HTTPException(status_code=500, detail="Could not publish the job")
+    db.set_submission_status(sid, "approved", job_id=job_id, clear_proof=True)
+    return {"ok": True, "job_id": job_id}
+
+
+@app.post("/api/admin/submissions/{sid}/reject")
+async def admin_reject_submission(sid: int, username: str = Depends(verify_token)):
+    db.reject_job_submission(sid)
+    return {"ok": True}
+
+
 # ── AI Provider Management ──────────────────────────────────────────────────
 
 class AISelectRequest(BaseModel):
@@ -1834,6 +1967,14 @@ if os.path.exists(FRONTEND_DIR):
         privacy_path = os.path.join(FRONTEND_DIR, "privacy.html")
         if os.path.exists(privacy_path):
             return FileResponse(privacy_path)
+        raise HTTPException(status_code=404)
+
+    # Serve the company "Post a Job" page
+    @app.get("/post-job")
+    async def serve_post_job():
+        p = os.path.join(FRONTEND_DIR, "post-job.html")
+        if os.path.exists(p):
+            return FileResponse(p)
         raise HTTPException(status_code=404)
 
     # PWA manifest

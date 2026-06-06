@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Post a Job — Srafelagi</title>
+    <meta name="description" content="Companies: post your job opening on Srafelagi and reach thousands of Ethiopian job seekers.">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇪🇹</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap"></noscript>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .pj-main { max-width: 720px; margin: 0 auto; padding: 110px 20px 60px; }
+        .pj-card {
+            background: var(--bg-primary); border: 1px solid var(--divider);
+            border-radius: var(--radius-xl); padding: 32px; box-shadow: var(--shadow-md);
+        }
+        .pj-card h1 { font-family: var(--font-display); font-size: 2rem; color: var(--text-primary); margin-bottom: 6px; }
+        .pj-sub { color: var(--text-muted); margin-bottom: 20px; }
+        .pj-price {
+            border-radius: var(--radius-md); padding: 14px 16px; margin-bottom: 22px;
+            font-size: 1rem; text-align: center;
+        }
+        .pj-price.free { background: var(--primary-soft); color: var(--primary); }
+        .pj-price.paid { background: var(--bg-tertiary); color: var(--text-primary); }
+        .pj-field { margin-bottom: 16px; }
+        .pj-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .pj-field label { display: block; font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; color: var(--text-secondary); }
+        .pj-field .req { color: #dc2626; }
+        .pj-field input, .pj-field textarea {
+            width: 100%; padding: 11px 14px; border: 1px solid var(--divider);
+            border-radius: var(--radius-md); background: var(--bg-secondary);
+            color: var(--text-primary); font-family: inherit; font-size: 0.95rem;
+        }
+        .pj-field input:focus, .pj-field textarea:focus { outline: none; border-color: var(--primary); }
+        .pj-field textarea { min-height: 150px; resize: vertical; }
+        .pj-hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 5px; }
+        .pj-payment { border: 1px dashed var(--border-strong, var(--divider)); border-radius: var(--radius-md); padding: 16px; margin-bottom: 18px; background: var(--bg-secondary); }
+        .pj-payment-info { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 12px; white-space: pre-wrap; }
+        .pj-msg { text-align: center; margin-top: 12px; font-size: 0.92rem; min-height: 1.2em; }
+        .pj-msg.success { color: var(--primary); }
+        .pj-msg.error { color: #dc2626; }
+        @media (max-width: 560px) { .pj-row { grid-template-columns: 1fr; } .pj-card { padding: 22px; } }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="/" class="logo"><img src="/images/srafelagi.jpg" alt="" class="logo-img"><span class="logo-text">Srafelagi</span></a>
+            <a href="/" class="btn btn-outline"><i class="fas fa-arrow-left"></i> Back to jobs</a>
+        </div>
+    </nav>
+
+    <main class="pj-main">
+        <div class="pj-card">
+            <h1>Post a Job</h1>
+            <p class="pj-sub">Reach thousands of Ethiopian job seekers. Your post is reviewed before it goes live.</p>
+            <div id="priceBanner" class="pj-price">Loading…</div>
+
+            <form id="postJobForm" novalidate>
+                <div class="pj-row">
+                    <div class="pj-field">
+                        <label for="company">Company name <span class="req">*</span></label>
+                        <input type="text" id="company" required maxlength="255">
+                    </div>
+                    <div class="pj-field">
+                        <label for="contact_email">Your email <span class="req">*</span></label>
+                        <input type="email" id="contact_email" required maxlength="255" placeholder="we contact you here">
+                    </div>
+                </div>
+                <div class="pj-field">
+                    <label for="title">Job title <span class="req">*</span></label>
+                    <input type="text" id="title" required maxlength="200">
+                </div>
+                <div class="pj-row">
+                    <div class="pj-field">
+                        <label for="location">Location</label>
+                        <input type="text" id="location" maxlength="120" placeholder="e.g. Addis Ababa">
+                    </div>
+                    <div class="pj-field">
+                        <label for="deadline">Application deadline</label>
+                        <input type="text" id="deadline" maxlength="120" placeholder="e.g. Jan 30, 2026">
+                    </div>
+                </div>
+                <div class="pj-row">
+                    <div class="pj-field">
+                        <label for="salary">Salary (optional)</label>
+                        <input type="text" id="salary" maxlength="120" placeholder="e.g. 25,000 ETB">
+                    </div>
+                    <div class="pj-field">
+                        <label for="apply_email">Apply email (optional)</label>
+                        <input type="email" id="apply_email" maxlength="255" placeholder="where applicants send CVs">
+                    </div>
+                </div>
+                <div class="pj-field">
+                    <label for="apply_url">Apply link (optional)</label>
+                    <input type="url" id="apply_url" maxlength="500" placeholder="https://...">
+                    <p class="pj-hint">If you leave apply email and link empty, we'll use your contact email.</p>
+                </div>
+                <div class="pj-field">
+                    <label for="description">Job description <span class="req">*</span></label>
+                    <textarea id="description" required placeholder="Responsibilities, requirements, how to apply…"></textarea>
+                </div>
+
+                <div class="pj-payment" id="paymentSection" hidden>
+                    <p class="pj-payment-info" id="paymentInfo"></p>
+                    <div class="pj-field" style="margin:0;">
+                        <label for="paymentProof">Payment screenshot <span class="req">*</span></label>
+                        <input type="file" id="paymentProof" accept="image/*">
+                        <p class="pj-hint">Upload a screenshot of your payment (image, max 3MB).</p>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-lg btn-block" id="submitBtn">Submit job</button>
+                <p class="pj-msg" id="postJobMsg" aria-live="polite"></p>
+            </form>
+        </div>
+    </main>
+
+    <script>
+        const $ = (id) => document.getElementById(id);
+        const banner = $('priceBanner'), paySection = $('paymentSection'), payInfo = $('paymentInfo');
+        const proof = $('paymentProof'), form = $('postJobForm'), msg = $('postJobMsg'), submitBtn = $('submitBtn');
+        let PRICE = 100;
+
+        fetch('/api/post-job/config').then(r => r.json()).then(c => {
+            PRICE = Number(c.price_birr) || 0;
+            if (PRICE > 0) {
+                banner.className = 'pj-price paid';
+                banner.innerHTML = 'Posting fee: <strong>' + PRICE + ' birr</strong> — pay, then upload your screenshot below.';
+                paySection.hidden = false;
+                payInfo.textContent = c.payment_info || 'Pay the posting fee, then upload your payment screenshot below.';
+            } else {
+                banner.className = 'pj-price free';
+                banner.innerHTML = '<strong>Post a job for free</strong> 🎉';
+                paySection.hidden = true;
+            }
+        }).catch(() => { banner.style.display = 'none'; });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const v = (id) => ($(id).value || '').trim();
+            if (!v('company') || !v('title') || v('description').length < 20 || !v('contact_email').includes('@')) {
+                msg.textContent = 'Please fill company, a valid email, title, and a description (20+ characters).';
+                msg.className = 'pj-msg error'; return;
+            }
+            if (PRICE > 0 && !proof.files[0]) {
+                msg.textContent = 'Please upload your payment screenshot.';
+                msg.className = 'pj-msg error'; return;
+            }
+            const fd = new FormData();
+            ['company', 'contact_email', 'title', 'description', 'location', 'deadline', 'salary', 'apply_url', 'apply_email']
+                .forEach(id => fd.append(id, v(id)));
+            if (PRICE > 0 && proof.files[0]) fd.append('payment_proof', proof.files[0]);
+
+            submitBtn.disabled = true;
+            msg.textContent = 'Submitting…'; msg.className = 'pj-msg';
+            try {
+                const res = await fetch('/api/post-job', { method: 'POST', body: fd });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    msg.textContent = data.message || 'Submitted! Your job will appear after admin approval.';
+                    msg.className = 'pj-msg success';
+                    form.reset();
+                } else {
+                    msg.textContent = data.detail || 'Something went wrong. Please try again.';
+                    msg.className = 'pj-msg error';
+                }
+            } catch (err) {
+                msg.textContent = 'Network error. Please try again.';
+                msg.className = 'pj-msg error';
+            } finally {
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
