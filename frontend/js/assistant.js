@@ -116,6 +116,9 @@
     flex: 1; overflow-y: auto; padding: 16px; display: flex;
     flex-direction: column; gap: 12px;
 }
+/* Push messages to the bottom so a short conversation fills the panel
+   from below instead of leaving a big blank space underneath. */
+.ai-chat-messages::before { content: ""; margin-top: auto; }
 .ai-msg { display: flex; }
 .ai-msg--bot { justify-content: flex-start; }
 .ai-msg--user { justify-content: flex-end; }
@@ -200,11 +203,25 @@
     const cvFile   = document.getElementById('aiCvFile');
     const cvName   = document.getElementById('aiCvName');
 
+    // ── User identity (shared from app.js via window.SRAFELAGI_USER) ──
+    function currentUserName() {
+        const u = window.SRAFELAGI_USER;
+        if (!u) return '';
+        return u.first_name || u.username || (u.email ? u.email.split('@')[0] : '') || '';
+    }
+    function reflectUser() {
+        const sub = document.getElementById('aiChatSubtitle');
+        const name = currentUserName();
+        if (sub) sub.textContent = name ? ('Hi ' + name + ' 👋') : 'Your Ethiopian Job Assistant';
+    }
+    document.addEventListener('srafelagi:auth', reflectUser);
+    reflectUser();
+
     // ── Toggle ──────────────────────────────────────────────
     btn.addEventListener('click', () => {
         isOpen = !isOpen;
         panel.hidden = !isOpen;
-        if (isOpen) { input.focus(); scrollBottom(); }
+        if (isOpen) { reflectUser(); input.focus(); scrollBottom(); }
     });
     closeBtn.addEventListener('click', () => { isOpen = false; panel.hidden = true; });
 
@@ -268,7 +285,7 @@
             const res = await fetch(`${API_BASE}/api/assistant/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: msg, history: history.slice(-8), cv_text: cvText }),
+                body: JSON.stringify({ message: msg, history: history.slice(-8), cv_text: cvText, user_name: currentUserName() }),
                 signal: _abortCtrl.signal,
             });
             const data = await res.json();

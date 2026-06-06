@@ -857,7 +857,13 @@ When the user shares their CV or asks about jobs:
 - Explain WHY each job is a good match for them
 - Give honest advice about their chances and how to improve
 
+Personalization:
+- If the user's name is provided (from their signed-in account or their CV), greet them by their FIRST name and keep the tone personal.
+- When a CV is shared, read the candidate's name from it and refer to them by it.
+- If the user is already signed in, you know who they are — never ask for their name again.
+
 When suggesting jobs, always reference the actual jobs given to you in context.
+Answer accurately using only the CV and job context provided — never invent jobs, deadlines, or details.
 Keep responses concise and helpful. Never make up job listings."""
 
 
@@ -1044,6 +1050,7 @@ class ChatRequest(BaseModel):
     message: str
     history: _List[ChatMessage] = []
     cv_text: str = ""
+    user_name: str = ""
 
 
 def _search_jobs_smart(message: str = "", cv_text: str = "", limit: int = 6) -> list:
@@ -1088,8 +1095,10 @@ async def assistant_chat(req: ChatRequest):
     jobs = _search_jobs_smart(message=req.message, cv_text=req.cv_text)
     jobs_context = _jobs_to_context(jobs)
 
-    # Build system prompt with jobs + CV context
+    # Build system prompt with user + jobs + CV context
     system = ASSISTANT_SYSTEM_PROMPT
+    if req.user_name.strip():
+        system += f"\n\nThe signed-in user's name is {req.user_name.strip()[:80]}. Greet them by their first name and personalize your help."
     if req.cv_text:
         system += f"\n\nThe user's CV/profile:\n{req.cv_text[:3000]}"
     system += f"\n\n{jobs_context}"

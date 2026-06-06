@@ -2801,5 +2801,13 @@ body.popup-open { overflow: hidden; }
 .login-popover-msg.error { color: #dc2626; }
 .login-popover-note { font-size: 0.72rem; color: var(--text-muted); text-align: center; margin: 0; line-height: 1.4; }
 @media (max-width: 480px) {
-    .login-popover { right: -8px; width: 280px; }
+    /* Center the sign-in card on phones instead of hanging off the right edge */
+    .login-popover {
+        position: fixed;
+        top: 72px;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+        width: min(330px, calc(100vw - 24px));
+    }
 }

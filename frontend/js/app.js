@@ -292,6 +292,9 @@ function renderAuthUI() {
     const authArea = document.getElementById('authArea');
     const menu = document.getElementById('userMenu');
     const signedIn = !!(currentUser && getAuthToken());
+    // Expose to the AI assistant (separate script) so it can greet by name.
+    window.SRAFELAGI_USER = signedIn ? currentUser : null;
+    document.dispatchEvent(new Event('srafelagi:auth'));
     if (signedIn) {
         if (authArea) authArea.hidden = true;
         if (menu) {
