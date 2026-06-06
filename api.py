@@ -680,10 +680,14 @@ async def alerts_unsubscribe(req: UnsubscribeRequest):
     return {"ok": True, "message": "Unsubscribed." if removed else "No subscription found for this email."}
 
 
-# ============ TELEGRAM LOGIN + SAVED JOBS (cross-device) ============
+# ============ USER LOGIN (Telegram + email) + SAVED JOBS ============
 
 class SavedMergeRequest(BaseModel):
     job_ids: List[int] = []
+
+
+class EmailLoginRequest(BaseModel):
+    email: str
 
 
 @app.post("/api/auth/telegram")
@@ -692,11 +696,11 @@ async def auth_telegram(payload: dict):
     if not _verify_telegram_auth(payload):
         raise HTTPException(status_code=401, detail="Invalid Telegram login")
     try:
-        uid = int(payload["id"])
+        tg_id = int(payload["id"])
     except (KeyError, TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Missing Telegram id")
-    user = db.upsert_user(
-        telegram_id=uid,
+    user = db.upsert_telegram_user(
+        telegram_id=tg_id,
         first_name=payload.get("first_name"),
         last_name=payload.get("last_name"),
         username=payload.get("username"),
@@ -704,8 +708,44 @@ async def auth_telegram(payload: dict):
     )
     if not user:
         raise HTTPException(status_code=500, detail="Could not create session")
-    token = create_user_token(uid)
+    token = create_user_token(user["user_id"])
     return {"access_token": token, "token_type": "bearer", "user": user}
+
+
+@app.post("/api/auth/email/request")
+async def auth_email_request(req: EmailLoginRequest, request: Request):
+    """Email a one-time magic sign-in link (passwordless)."""
+    email = (req.email or "").strip().lower()
+    if not email or "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Please enter a valid email address")
+    if not _rate_limiter.is_allowed(_get_client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many requests. Please wait a minute.")
+    token = db.create_login_token(email)
+    if not token:
+        raise HTTPException(status_code=500, detail="Could not create a login link. Try again.")
+    link = f"{SITE_BASE_URL}/api/auth/email/verify?token={token}"
+    text = (f"Sign in to Srafelagi by opening this link:\n\n{link}\n\n"
+            "It expires in 30 minutes. If you didn't request it, ignore this email.")
+    html = (f'<p>Sign in to Srafelagi:</p>'
+            f'<p><a href="{link}">Sign in to Srafelagi</a></p>'
+            f'<p>This link expires in 30 minutes. If you didn\'t request it, you can ignore this email.</p>')
+    if not send_email(email, "Your Srafelagi sign-in link", text, html):
+        raise HTTPException(status_code=503, detail="Email service is unavailable right now. Try Telegram login.")
+    return {"ok": True, "message": "Check your email for a sign-in link."}
+
+
+@app.get("/api/auth/email/verify")
+async def auth_email_verify(token: str = None):
+    """Consume a magic link, create/find the user, and hand the session token to the SPA via URL fragment."""
+    email = db.consume_login_token(token) if token else None
+    if not email:
+        return RedirectResponse(url="/?login_error=expired", status_code=302)
+    user = db.upsert_email_user(email)
+    if not user:
+        return RedirectResponse(url="/?login_error=server", status_code=302)
+    jwt_tok = create_user_token(user["user_id"])
+    # Fragment keeps the token out of server logs / referrers; the SPA reads it on load.
+    return RedirectResponse(url=f"/#login_token={jwt_tok}", status_code=302)
 
 
 @app.get("/api/me")

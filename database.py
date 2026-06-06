@@ -364,24 +364,44 @@ class Database:
                         PRIMARY KEY (job_id, channel)
                     );
                 """)
-                # Telegram-login users + their saved jobs (cross-device sync)
+                # Site users — Telegram and/or email login under one account (user_id).
+                # Migrate from the first (telegram_id-PK) shape if present; those tables
+                # are only hours old with ~0 real users, so a rebuild is safe.
+                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'")
+                _user_cols = {r[0] for r in cur.fetchall()}
+                if _user_cols and 'user_id' not in _user_cols:
+                    cur.execute("DROP TABLE IF EXISTS saved_jobs;")
+                    cur.execute("DROP TABLE IF EXISTS users;")
+                    logger.info("Rebuilt users/saved_jobs for multi-provider login (user_id)")
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS users (
-                        telegram_id   BIGINT PRIMARY KEY,
+                        user_id       SERIAL PRIMARY KEY,
+                        telegram_id   BIGINT UNIQUE,
+                        email         VARCHAR(255) UNIQUE,
                         first_name    VARCHAR(255),
                         last_name     VARCHAR(255),
                         username      VARCHAR(255),
                         photo_url     TEXT,
+                        auth_provider VARCHAR(20),
                         created_at    TIMESTAMP DEFAULT NOW(),
                         last_login_at TIMESTAMP DEFAULT NOW()
                     );
                 """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS saved_jobs (
-                        telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
-                        job_id      INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-                        saved_at    TIMESTAMP DEFAULT NOW(),
-                        PRIMARY KEY (telegram_id, job_id)
+                        user_id  INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                        job_id   INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                        saved_at TIMESTAMP DEFAULT NOW(),
+                        PRIMARY KEY (user_id, job_id)
+                    );
+                """)
+                # One-time email login links (magic links)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS login_tokens (
+                        token      VARCHAR(64) PRIMARY KEY,
+                        email      VARCHAR(255) NOT NULL,
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        used       BOOLEAN DEFAULT FALSE
                     );
                 """)
                 cur.execute("""
@@ -1874,8 +1894,11 @@ class Database:
             self.conn.rollback()
 
     # ================================================================
-    # TELEGRAM-LOGIN USERS + SAVED JOBS (cross-device sync)
+    # SITE USERS (Telegram and/or email login) + SAVED JOBS
     # ================================================================
+
+    _USER_COLS = ("user_id, telegram_id, email, first_name, last_name, "
+                  "username, photo_url, auth_provider, created_at, last_login_at")
 
     @staticmethod
     def _serialize_user(row) -> Optional[Dict[str, Any]]:
@@ -1889,23 +1912,23 @@ class Database:
                 u[k] = v.isoformat()
         return u
 
-    def upsert_user(self, telegram_id, first_name=None, last_name=None,
-                    username=None, photo_url=None) -> Optional[Dict[str, Any]]:
-        """Create or update a Telegram-login user. Bumps last_login_at. Returns the user dict."""
+    def upsert_telegram_user(self, telegram_id, first_name=None, last_name=None,
+                             username=None, photo_url=None) -> Optional[Dict[str, Any]]:
+        """Create or update a Telegram-login user (keyed by telegram_id). Returns the user dict."""
         self._ensure_connection()
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
-                    """
-                    INSERT INTO users (telegram_id, first_name, last_name, username, photo_url, created_at, last_login_at)
-                    VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+                    f"""
+                    INSERT INTO users (telegram_id, first_name, last_name, username, photo_url, auth_provider, created_at, last_login_at)
+                    VALUES (%s, %s, %s, %s, %s, 'telegram', NOW(), NOW())
                     ON CONFLICT (telegram_id) DO UPDATE SET
                         first_name    = EXCLUDED.first_name,
                         last_name     = EXCLUDED.last_name,
                         username      = EXCLUDED.username,
                         photo_url     = EXCLUDED.photo_url,
                         last_login_at = NOW()
-                    RETURNING telegram_id, first_name, last_name, username, photo_url, created_at, last_login_at
+                    RETURNING {self._USER_COLS}
                     """,
                     (int(telegram_id), first_name, last_name, username, photo_url),
                 )
@@ -1913,23 +1936,47 @@ class Database:
             self.conn.commit()
             return self._serialize_user(row)
         except Exception as e:
-            logger.warning("upsert_user failed: %s", e)
+            logger.warning("upsert_telegram_user failed: %s", e)
             try:
                 self.conn.rollback()
             except Exception:
                 pass
             return None
 
-    def get_user(self, telegram_id) -> Optional[Dict[str, Any]]:
-        """Get one user by Telegram id."""
+    def upsert_email_user(self, email: str) -> Optional[Dict[str, Any]]:
+        """Create or update an email-login user (keyed by email). Returns the user dict."""
         self._ensure_connection()
+        email = (email or "").strip().lower()
+        if not email:
+            return None
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
-                    """SELECT telegram_id, first_name, last_name, username, photo_url, created_at, last_login_at
-                       FROM users WHERE telegram_id = %s""",
-                    (int(telegram_id),),
+                    f"""
+                    INSERT INTO users (email, auth_provider, created_at, last_login_at)
+                    VALUES (%s, 'email', NOW(), NOW())
+                    ON CONFLICT (email) DO UPDATE SET last_login_at = NOW()
+                    RETURNING {self._USER_COLS}
+                    """,
+                    (email,),
                 )
+                row = cur.fetchone()
+            self.conn.commit()
+            return self._serialize_user(row)
+        except Exception as e:
+            logger.warning("upsert_email_user failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return None
+
+    def get_user(self, user_id) -> Optional[Dict[str, Any]]:
+        """Get one user by surrogate user_id."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f"SELECT {self._USER_COLS} FROM users WHERE user_id = %s", (int(user_id),))
                 row = cur.fetchone()
             return self._serialize_user(row)
         except Exception as e:
@@ -1940,15 +1987,64 @@ class Database:
                 pass
             return None
 
-    def add_saved_job(self, telegram_id, job_id) -> bool:
+    # ── Email magic-link tokens ──────────────────────────────
+    def create_login_token(self, email: str) -> Optional[str]:
+        """Create a one-time email login token. Returns the token or None."""
+        self._ensure_connection()
+        import secrets
+        token = secrets.token_urlsafe(32)
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO login_tokens (token, email) VALUES (%s, %s)",
+                    (token, (email or "").strip().lower()),
+                )
+            self.conn.commit()
+            return token
+        except Exception as e:
+            logger.warning("create_login_token failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return None
+
+    def consume_login_token(self, token: str, max_age_minutes: int = 30) -> Optional[str]:
+        """Validate + burn a login token. Returns the email if valid & unexpired, else None."""
+        if not token:
+            return None
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT email FROM login_tokens WHERE token = %s AND used = FALSE "
+                    "AND created_at > NOW() - INTERVAL %s",
+                    (token, f"{int(max_age_minutes)} minutes"),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                cur.execute("UPDATE login_tokens SET used = TRUE WHERE token = %s", (token,))
+            self.conn.commit()
+            return row[0]
+        except Exception as e:
+            logger.warning("consume_login_token failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return None
+
+    # ── Saved jobs (keyed by user_id) ────────────────────────
+    def add_saved_job(self, user_id, job_id) -> bool:
         """Save one job for a user (no-op if already saved)."""
         self._ensure_connection()
         try:
             with self.conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO saved_jobs (telegram_id, job_id) VALUES (%s, %s)
-                       ON CONFLICT (telegram_id, job_id) DO NOTHING""",
-                    (int(telegram_id), int(job_id)),
+                    """INSERT INTO saved_jobs (user_id, job_id) VALUES (%s, %s)
+                       ON CONFLICT (user_id, job_id) DO NOTHING""",
+                    (int(user_id), int(job_id)),
                 )
             self.conn.commit()
             return True
@@ -1960,14 +2056,14 @@ class Database:
                 pass
             return False
 
-    def remove_saved_job(self, telegram_id, job_id) -> bool:
+    def remove_saved_job(self, user_id, job_id) -> bool:
         """Remove one saved job for a user."""
         self._ensure_connection()
         try:
             with self.conn.cursor() as cur:
                 cur.execute(
-                    "DELETE FROM saved_jobs WHERE telegram_id = %s AND job_id = %s",
-                    (int(telegram_id), int(job_id)),
+                    "DELETE FROM saved_jobs WHERE user_id = %s AND job_id = %s",
+                    (int(user_id), int(job_id)),
                 )
                 self.conn.commit()
                 return cur.rowcount > 0
@@ -1979,7 +2075,7 @@ class Database:
                 pass
             return False
 
-    def merge_saved_jobs(self, telegram_id, job_ids: List[int]) -> None:
+    def merge_saved_jobs(self, user_id, job_ids: List[int]) -> None:
         """Bulk-save a list of job ids (used to migrate localStorage saves on first login).
         Filters to jobs that still exist so a stale/deleted id can't abort the insert."""
         if not job_ids:
@@ -1991,10 +2087,10 @@ class Database:
                 return
             with self.conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO saved_jobs (telegram_id, job_id)
+                    """INSERT INTO saved_jobs (user_id, job_id)
                        SELECT %s, j.id FROM jobs j WHERE j.id = ANY(%s)
-                       ON CONFLICT (telegram_id, job_id) DO NOTHING""",
-                    (int(telegram_id), ids),
+                       ON CONFLICT (user_id, job_id) DO NOTHING""",
+                    (int(user_id), ids),
                 )
             self.conn.commit()
         except Exception as e:
@@ -2004,14 +2100,14 @@ class Database:
             except Exception:
                 pass
 
-    def get_saved_job_ids(self, telegram_id) -> List[int]:
+    def get_saved_job_ids(self, user_id) -> List[int]:
         """Return the user's saved job ids, newest first."""
         self._ensure_connection()
         try:
             with self.conn.cursor() as cur:
                 cur.execute(
-                    "SELECT job_id FROM saved_jobs WHERE telegram_id = %s ORDER BY saved_at DESC",
-                    (int(telegram_id),),
+                    "SELECT job_id FROM saved_jobs WHERE user_id = %s ORDER BY saved_at DESC",
+                    (int(user_id),),
                 )
                 return [r[0] for r in cur.fetchall()]
         except Exception as e:
@@ -2022,7 +2118,7 @@ class Database:
                 pass
             return []
 
-    def get_saved_jobs(self, telegram_id) -> List[Dict[str, Any]]:
+    def get_saved_jobs(self, user_id) -> List[Dict[str, Any]]:
         """Return full job rows the user saved, newest saved first (same shape as get_jobs)."""
         self._ensure_connection()
         try:
@@ -2034,10 +2130,10 @@ class Database:
                            j.source_url, j.apply_url, j.apply_email, j.apply_type,
                            j.deadline_text as deadline, j.salary, j.created_at, j.updated_at
                     FROM saved_jobs s JOIN jobs j ON j.id = s.job_id
-                    WHERE s.telegram_id = %s
+                    WHERE s.user_id = %s
                     ORDER BY s.saved_at DESC
                     """,
-                    (int(telegram_id),),
+                    (int(user_id),),
                 )
                 rows = cur.fetchall()
             out = []
@@ -2056,12 +2152,12 @@ class Database:
                 pass
             return []
 
-    def count_saved_jobs(self, telegram_id) -> int:
+    def count_saved_jobs(self, user_id) -> int:
         """Number of jobs a user has saved."""
         self._ensure_connection()
         try:
             with self.conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM saved_jobs WHERE telegram_id = %s", (int(telegram_id),))
+                cur.execute("SELECT COUNT(*) FROM saved_jobs WHERE user_id = %s", (int(user_id),))
                 return int(cur.fetchone()[0] or 0)
         except Exception as e:
             logger.warning("count_saved_jobs failed: %s", e)
@@ -2078,9 +2174,9 @@ class Database:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT u.telegram_id, u.first_name, u.last_name, u.username, u.photo_url,
-                           u.created_at, u.last_login_at,
-                           (SELECT COUNT(*) FROM saved_jobs s WHERE s.telegram_id = u.telegram_id) AS saved_count
+                    SELECT u.user_id, u.telegram_id, u.email, u.first_name, u.last_name,
+                           u.username, u.photo_url, u.auth_provider, u.created_at, u.last_login_at,
+                           (SELECT COUNT(*) FROM saved_jobs s WHERE s.user_id = u.user_id) AS saved_count
                     FROM users u
                     ORDER BY u.last_login_at DESC NULLS LAST, u.created_at DESC
                     LIMIT %s OFFSET %s

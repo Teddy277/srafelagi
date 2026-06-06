@@ -77,8 +77,23 @@
             </div>
             
             <div class="nav-actions">
-                <!-- Telegram login (rendered by app.js when logged out) -->
-                <div id="tgLoginContainer" class="tg-login-container"></div>
+                <!-- Sign in (Telegram + email) — shown when logged out -->
+                <div class="auth-area" id="authArea">
+                    <button class="btn btn-primary" id="loginOpenBtn" aria-haspopup="dialog" aria-expanded="false">
+                        <i class="fas fa-right-to-bracket"></i> <span>Sign in</span>
+                    </button>
+                    <div class="login-popover" id="loginPopover" hidden role="dialog" aria-label="Sign in to save jobs">
+                        <p class="login-popover-title">Save jobs to your account</p>
+                        <div id="tgLoginContainer" class="tg-login-container"></div>
+                        <div class="login-or"><span>or</span></div>
+                        <form id="emailLoginForm" class="login-email-form" novalidate>
+                            <input type="email" id="emailLoginInput" placeholder="your@email.com" required autocomplete="email" aria-label="Email address">
+                            <button type="submit" class="btn btn-outline btn-block">Email me a sign-in link</button>
+                        </form>
+                        <p class="login-popover-msg" id="loginPopoverMsg" aria-live="polite"></p>
+                        <p class="login-popover-note">No password. We only use this to sync your saved jobs.</p>
+                    </div>
+                </div>
 
                 <!-- Logged-in user menu (shown by app.js when logged in) -->
                 <div class="user-menu" id="userMenu" hidden>

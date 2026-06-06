@@ -287,18 +287,20 @@ function renderTelegramWidget() {
     c.appendChild(s);
 }
 
-/** Show either the login widget or the user menu based on auth state. */
+/** Show either the sign-in area or the user menu based on auth state. */
 function renderAuthUI() {
-    const loginC = document.getElementById('tgLoginContainer');
+    const authArea = document.getElementById('authArea');
     const menu = document.getElementById('userMenu');
     const signedIn = !!(currentUser && getAuthToken());
     if (signedIn) {
-        if (loginC) { loginC.hidden = true; loginC.innerHTML = ''; }
+        if (authArea) authArea.hidden = true;
         if (menu) {
             menu.hidden = false;
             const name = document.getElementById('userMenuName');
             const av = document.getElementById('userMenuAvatar');
-            if (name) name.textContent = currentUser.first_name || currentUser.username || 'Me';
+            const label = currentUser.first_name || currentUser.username
+                || (currentUser.email ? currentUser.email.split('@')[0] : 'Me');
+            if (name) name.textContent = label;
             if (av) {
                 if (currentUser.photo_url) { av.src = currentUser.photo_url; av.style.display = ''; }
                 else { av.removeAttribute('src'); av.style.display = 'none'; }
@@ -306,7 +308,7 @@ function renderAuthUI() {
         }
     } else {
         if (menu) menu.hidden = true;
-        if (loginC) { loginC.hidden = false; renderTelegramWidget(); }
+        if (authArea) { authArea.hidden = false; renderTelegramWidget(); }
     }
 }
 
@@ -351,6 +353,24 @@ async function mergeAndSyncSaved() {
 
 function initAuth() {
     setupUserMenu();
+    setupLoginPopover();
+
+    // Magic-link return: the session token arrives in the URL fragment (#login_token=...)
+    let justLoggedIn = false;
+    const m = (window.location.hash || '').match(/(?:^|[#&])login_token=([^&]+)/);
+    if (m) {
+        setAuthToken(decodeURIComponent(m[1]));
+        justLoggedIn = true;
+        history.replaceState({}, '', window.location.pathname + window.location.search);
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('login_error')) {
+        showToast('That sign-in link was invalid or expired. Please try again.', 'error');
+        params.delete('login_error');
+        const qs = params.toString();
+        history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : '') + (window.location.hash || ''));
+    }
+
     const token = getAuthToken();
     if (!token) { renderAuthUI(); return; }
     // Restore the session, then reconcile saved jobs across devices.
@@ -363,9 +383,54 @@ function initAuth() {
             if (!user) return;
             currentUser = user;
             renderAuthUI();
+            if (justLoggedIn) showToast('Signed in — your saved jobs are synced.', 'success');
             return mergeAndSyncSaved();
         })
         .catch(() => { renderAuthUI(); });
+}
+
+function setupLoginPopover() {
+    const btn = document.getElementById('loginOpenBtn');
+    const pop = document.getElementById('loginPopover');
+    if (btn && pop) {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const willOpen = pop.hidden;
+            pop.hidden = !willOpen;
+            btn.setAttribute('aria-expanded', String(willOpen));
+            if (willOpen) { renderTelegramWidget(); document.getElementById('emailLoginInput')?.focus(); }
+        });
+        pop.addEventListener('click', (e) => e.stopPropagation());
+        document.addEventListener('click', (e) => {
+            if (!pop.hidden && !btn.contains(e.target)) { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+        });
+    }
+    const form = document.getElementById('emailLoginForm');
+    const msg = document.getElementById('loginPopoverMsg');
+    if (form) {
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('emailLoginInput')?.value?.trim();
+            if (!email) return;
+            if (msg) { msg.textContent = 'Sending…'; msg.className = 'login-popover-msg'; }
+            try {
+                const res = await fetch(`${API_BASE}/api/auth/email/request`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    if (msg) { msg.textContent = data.message || 'Check your email for a sign-in link.'; msg.className = 'login-popover-msg success'; }
+                    form.reset();
+                } else {
+                    if (msg) { msg.textContent = data.detail || 'Something went wrong. Try again.'; msg.className = 'login-popover-msg error'; }
+                }
+            } catch (err) {
+                if (msg) { msg.textContent = 'Network error. Try again.'; msg.className = 'login-popover-msg error'; }
+            }
+        });
+    }
 }
 
 function setupUserMenu() {
