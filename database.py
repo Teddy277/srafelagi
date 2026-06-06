@@ -364,6 +364,26 @@ class Database:
                         PRIMARY KEY (job_id, channel)
                     );
                 """)
+                # Telegram-login users + their saved jobs (cross-device sync)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        telegram_id   BIGINT PRIMARY KEY,
+                        first_name    VARCHAR(255),
+                        last_name     VARCHAR(255),
+                        username      VARCHAR(255),
+                        photo_url     TEXT,
+                        created_at    TIMESTAMP DEFAULT NOW(),
+                        last_login_at TIMESTAMP DEFAULT NOW()
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS saved_jobs (
+                        telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+                        job_id      INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                        saved_at    TIMESTAMP DEFAULT NOW(),
+                        PRIMARY KEY (telegram_id, job_id)
+                    );
+                """)
                 cur.execute("""
                     INSERT INTO processed_telegram_messages (telegram_id, telegram_channel)
                     SELECT DISTINCT telegram_id, telegram_channel
@@ -1852,6 +1872,262 @@ class Database:
             self.conn.commit()
         except Exception as e:
             self.conn.rollback()
+
+    # ================================================================
+    # TELEGRAM-LOGIN USERS + SAVED JOBS (cross-device sync)
+    # ================================================================
+
+    @staticmethod
+    def _serialize_user(row) -> Optional[Dict[str, Any]]:
+        """Convert a users row to a JSON-safe dict (datetimes -> isoformat)."""
+        if row is None:
+            return None
+        u = dict(row)
+        for k in ("created_at", "last_login_at"):
+            v = u.get(k)
+            if v is not None and hasattr(v, "isoformat"):
+                u[k] = v.isoformat()
+        return u
+
+    def upsert_user(self, telegram_id, first_name=None, last_name=None,
+                    username=None, photo_url=None) -> Optional[Dict[str, Any]]:
+        """Create or update a Telegram-login user. Bumps last_login_at. Returns the user dict."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (telegram_id, first_name, last_name, username, photo_url, created_at, last_login_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+                    ON CONFLICT (telegram_id) DO UPDATE SET
+                        first_name    = EXCLUDED.first_name,
+                        last_name     = EXCLUDED.last_name,
+                        username      = EXCLUDED.username,
+                        photo_url     = EXCLUDED.photo_url,
+                        last_login_at = NOW()
+                    RETURNING telegram_id, first_name, last_name, username, photo_url, created_at, last_login_at
+                    """,
+                    (int(telegram_id), first_name, last_name, username, photo_url),
+                )
+                row = cur.fetchone()
+            self.conn.commit()
+            return self._serialize_user(row)
+        except Exception as e:
+            logger.warning("upsert_user failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return None
+
+    def get_user(self, telegram_id) -> Optional[Dict[str, Any]]:
+        """Get one user by Telegram id."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """SELECT telegram_id, first_name, last_name, username, photo_url, created_at, last_login_at
+                       FROM users WHERE telegram_id = %s""",
+                    (int(telegram_id),),
+                )
+                row = cur.fetchone()
+            return self._serialize_user(row)
+        except Exception as e:
+            logger.warning("get_user failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return None
+
+    def add_saved_job(self, telegram_id, job_id) -> bool:
+        """Save one job for a user (no-op if already saved)."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO saved_jobs (telegram_id, job_id) VALUES (%s, %s)
+                       ON CONFLICT (telegram_id, job_id) DO NOTHING""",
+                    (int(telegram_id), int(job_id)),
+                )
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.warning("add_saved_job failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return False
+
+    def remove_saved_job(self, telegram_id, job_id) -> bool:
+        """Remove one saved job for a user."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM saved_jobs WHERE telegram_id = %s AND job_id = %s",
+                    (int(telegram_id), int(job_id)),
+                )
+                self.conn.commit()
+                return cur.rowcount > 0
+        except Exception as e:
+            logger.warning("remove_saved_job failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return False
+
+    def merge_saved_jobs(self, telegram_id, job_ids: List[int]) -> None:
+        """Bulk-save a list of job ids (used to migrate localStorage saves on first login).
+        Filters to jobs that still exist so a stale/deleted id can't abort the insert."""
+        if not job_ids:
+            return
+        self._ensure_connection()
+        try:
+            ids = [int(x) for x in job_ids if str(x).strip()]
+            if not ids:
+                return
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO saved_jobs (telegram_id, job_id)
+                       SELECT %s, j.id FROM jobs j WHERE j.id = ANY(%s)
+                       ON CONFLICT (telegram_id, job_id) DO NOTHING""",
+                    (int(telegram_id), ids),
+                )
+            self.conn.commit()
+        except Exception as e:
+            logger.warning("merge_saved_jobs failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+
+    def get_saved_job_ids(self, telegram_id) -> List[int]:
+        """Return the user's saved job ids, newest first."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT job_id FROM saved_jobs WHERE telegram_id = %s ORDER BY saved_at DESC",
+                    (int(telegram_id),),
+                )
+                return [r[0] for r in cur.fetchall()]
+        except Exception as e:
+            logger.warning("get_saved_job_ids failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return []
+
+    def get_saved_jobs(self, telegram_id) -> List[Dict[str, Any]]:
+        """Return full job rows the user saved, newest saved first (same shape as get_jobs)."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT j.id, j.telegram_id, j.telegram_channel, j.channel_username, j.telegram_date,
+                           j.title, j.company, j.location, j.description,
+                           j.source_url, j.apply_url, j.apply_email, j.apply_type,
+                           j.deadline_text as deadline, j.salary, j.created_at, j.updated_at
+                    FROM saved_jobs s JOIN jobs j ON j.id = s.job_id
+                    WHERE s.telegram_id = %s
+                    ORDER BY s.saved_at DESC
+                    """,
+                    (int(telegram_id),),
+                )
+                rows = cur.fetchall()
+            out = []
+            for row in rows:
+                job = dict(row)
+                for key in ("telegram_date", "created_at", "updated_at"):
+                    if job.get(key) and hasattr(job[key], "isoformat"):
+                        job[key] = job[key].isoformat()
+                out.append(job)
+            return out
+        except Exception as e:
+            logger.warning("get_saved_jobs failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return []
+
+    def count_saved_jobs(self, telegram_id) -> int:
+        """Number of jobs a user has saved."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM saved_jobs WHERE telegram_id = %s", (int(telegram_id),))
+                return int(cur.fetchone()[0] or 0)
+        except Exception as e:
+            logger.warning("count_saved_jobs failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return 0
+
+    def list_users(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """List users (most recently active first) with their saved-job counts, for the admin dashboard."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT u.telegram_id, u.first_name, u.last_name, u.username, u.photo_url,
+                           u.created_at, u.last_login_at,
+                           (SELECT COUNT(*) FROM saved_jobs s WHERE s.telegram_id = u.telegram_id) AS saved_count
+                    FROM users u
+                    ORDER BY u.last_login_at DESC NULLS LAST, u.created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (limit, offset),
+                )
+                return [self._serialize_user(r) for r in cur.fetchall()]
+        except Exception as e:
+            logger.warning("list_users failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return []
+
+    def count_users(self) -> int:
+        """Total registered users."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM users")
+                return int(cur.fetchone()[0] or 0)
+        except Exception as e:
+            logger.warning("count_users failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return 0
+
+    def count_users_since(self, interval: str = "7 days") -> int:
+        """Users created within the given interval (e.g. '7 days')."""
+        self._ensure_connection()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM users WHERE created_at > NOW() - INTERVAL %s",
+                    (interval,),
+                )
+                return int(cur.fetchone()[0] or 0)
+        except Exception as e:
+            logger.warning("count_users_since failed: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            return 0
 
     def close(self):
         """Close database connection"""

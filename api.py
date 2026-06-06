@@ -4,11 +4,12 @@ Srafelagi API - Complete Version
 import os
 import socket
 import hashlib
+import hmac
 import logging
 from contextlib import closing
 from datetime import datetime, timedelta
 
-from typing import Optional
+from typing import Optional, List
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -176,6 +177,68 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+
+# ── Telegram login (no password) ─────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or "").strip()
+USER_SESSION_DAYS = int(os.getenv("USER_SESSION_DAYS", "60"))
+
+
+def _verify_telegram_auth(data: dict) -> bool:
+    """Verify a Telegram Login Widget payload per Telegram's spec:
+    HMAC-SHA256 of the sorted data-check-string keyed by SHA256(bot_token).
+    Also rejects payloads older than 24h. Returns False if the bot token is unset."""
+    if not TELEGRAM_BOT_TOKEN:
+        logger.warning("Telegram login attempted but TELEGRAM_BOT_TOKEN is not set")
+        return False
+    recv_hash = data.get("hash")
+    if not recv_hash:
+        return False
+    pairs = []
+    for key in sorted(data.keys()):
+        if key == "hash":
+            continue
+        val = data[key]
+        if val is None:
+            continue
+        pairs.append(f"{key}={val}")
+    data_check_string = "\n".join(pairs)
+    secret_key = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode()).digest()
+    computed = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(computed, str(recv_hash)):
+        return False
+    try:
+        auth_date = int(data.get("auth_date", 0))
+    except (TypeError, ValueError):
+        return False
+    if auth_date <= 0 or (datetime.utcnow().timestamp() - auth_date) > 86400:
+        return False
+    return True
+
+
+def create_user_token(telegram_id: int) -> str:
+    """Long-lived session token for a logged-in site user (distinct from admin tokens)."""
+    if not JWT_AVAILABLE:
+        raise HTTPException(status_code=500, detail="JWT not available. Install PyJWT.")
+    expire = datetime.utcnow() + timedelta(days=USER_SESSION_DAYS)
+    payload = {"sub": "user", "uid": int(telegram_id), "exp": expire}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> int:
+    """Auth dependency for user endpoints — returns the caller's Telegram id."""
+    if not JWT_AVAILABLE:
+        raise HTTPException(status_code=500, detail="JWT not available. Install PyJWT.")
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("sub") != "user" or "uid" not in payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return int(payload["uid"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
 
 async def _keep_alive():
     """Self-ping the public URL so Render's free tier never spins down.
@@ -615,6 +678,70 @@ async def alerts_unsubscribe(req: UnsubscribeRequest):
         raise HTTPException(status_code=400, detail="Email required")
     removed = db.unsubscribe_job_alert(email)
     return {"ok": True, "message": "Unsubscribed." if removed else "No subscription found for this email."}
+
+
+# ============ TELEGRAM LOGIN + SAVED JOBS (cross-device) ============
+
+class SavedMergeRequest(BaseModel):
+    job_ids: List[int] = []
+
+
+@app.post("/api/auth/telegram")
+async def auth_telegram(payload: dict):
+    """Verify a Telegram Login Widget payload, upsert the user, and return a session token."""
+    if not _verify_telegram_auth(payload):
+        raise HTTPException(status_code=401, detail="Invalid Telegram login")
+    try:
+        uid = int(payload["id"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Missing Telegram id")
+    user = db.upsert_user(
+        telegram_id=uid,
+        first_name=payload.get("first_name"),
+        last_name=payload.get("last_name"),
+        username=payload.get("username"),
+        photo_url=payload.get("photo_url"),
+    )
+    if not user:
+        raise HTTPException(status_code=500, detail="Could not create session")
+    token = create_user_token(uid)
+    return {"access_token": token, "token_type": "bearer", "user": user}
+
+
+@app.get("/api/me")
+async def get_me(uid: int = Depends(get_current_user_id)):
+    """Return the logged-in user (used to restore the session on page load)."""
+    user = db.get_user(uid)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user["saved_count"] = db.count_saved_jobs(uid)
+    return user
+
+
+@app.get("/api/saved")
+async def list_saved(uid: int = Depends(get_current_user_id)):
+    """Full saved-job objects + their ids for the logged-in user."""
+    return {"jobs": db.get_saved_jobs(uid), "ids": db.get_saved_job_ids(uid)}
+
+
+@app.post("/api/saved/merge")
+async def merge_saved(req: SavedMergeRequest, uid: int = Depends(get_current_user_id)):
+    """Merge the visitor's local (device) saves into their account on first login.
+    Declared BEFORE /api/saved/{job_id} so the literal 'merge' isn't captured as an id."""
+    db.merge_saved_jobs(uid, req.job_ids or [])
+    return {"ids": db.get_saved_job_ids(uid)}
+
+
+@app.post("/api/saved/{job_id}")
+async def save_job_for_user(job_id: int, uid: int = Depends(get_current_user_id)):
+    db.add_saved_job(uid, job_id)
+    return {"ok": True}
+
+
+@app.delete("/api/saved/{job_id}")
+async def unsave_job_for_user(job_id: int, uid: int = Depends(get_current_user_id)):
+    db.remove_saved_job(uid, job_id)
+    return {"ok": True}
 
 
 # ============ AI ASSISTANT ============
@@ -1085,6 +1212,24 @@ async def admin_view_stats(period: str = "month", username: str = Depends(verify
     return db.get_view_stats(period)
 
 
+@app.get("/api/admin/users")
+async def admin_users(page: int = 1, per_page: int = 50, username: str = Depends(verify_token)):
+    """Registered Telegram-login users for the admin dashboard."""
+    page = max(1, page)
+    per_page = min(200, max(1, per_page))
+    offset = (page - 1) * per_page
+    users = db.list_users(limit=per_page, offset=offset)
+    total = db.count_users()
+    return {
+        "users": users,
+        "total": total,
+        "new_7d": db.count_users_since("7 days"),
+        "page": page,
+        "per_page": per_page,
+        "pages": max(1, (total + per_page - 1) // per_page),
+    }
+
+
 # ── AI Provider Management ──────────────────────────────────────────────────
 
 class AISelectRequest(BaseModel):
@@ -1544,6 +1689,14 @@ if os.path.exists(FRONTEND_DIR):
         p = os.path.join(FRONTEND_DIR, "manifest.json")
         if os.path.exists(p):
             return FileResponse(p, media_type="application/manifest+json")
+        raise HTTPException(status_code=404)
+
+    # Runtime config (API base + Telegram bot username for the login widget)
+    @app.get("/config.js")
+    async def serve_config_js():
+        p = os.path.join(FRONTEND_DIR, "config.js")
+        if os.path.exists(p):
+            return FileResponse(p, media_type="application/javascript")
         raise HTTPException(status_code=404)
 
     # Serve admin pages (/admin and /admin/ -> login.html)

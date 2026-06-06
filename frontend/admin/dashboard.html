@@ -74,6 +74,20 @@
                                 <div class="stat-label">Apply Clicks (7d)</div>
                             </div>
                         </div>
+                        <div class="stat-card stat-card--users">
+                            <div class="stat-icon"><i class="fas fa-users"></i></div>
+                            <div class="stat-content">
+                                <div class="stat-value" id="statUsers">—</div>
+                                <div class="stat-label">Registered Users</div>
+                            </div>
+                        </div>
+                        <div class="stat-card stat-card--users">
+                            <div class="stat-icon"><i class="fas fa-user-plus"></i></div>
+                            <div class="stat-content">
+                                <div class="stat-value" id="statUsersNew">—</div>
+                                <div class="stat-label">New Users (7d)</div>
+                            </div>
+                        </div>
                     </div>
                 </section>
                 <section class="dashboard-section">
@@ -121,6 +135,27 @@
                             </tbody>
                         </table>
                         <p id="topJobsEmpty" class="top-jobs-empty" style="display:none;">No apply clicks yet.</p>
+                    </div>
+                </section>
+                <section class="dashboard-section">
+                    <h2 class="dashboard-section-title">Users</h2>
+                    <div class="top-jobs-wrapper">
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>User</th>
+                                    <th>Username</th>
+                                    <th>Joined</th>
+                                    <th>Last seen</th>
+                                    <th>Saved</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usersBody">
+                                <tr><td colspan="6" class="top-jobs-loading">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                        <p id="usersEmpty" class="top-jobs-empty" style="display:none;">No registered users yet.</p>
                     </div>
                 </section>
                 <div class="admin-actions">
@@ -251,6 +286,47 @@
                 document.getElementById('statViewsTotal').textContent = '—';
             }
         }
+        async function loadUsers() {
+            try {
+                const res = await fetch(API_BASE + '/api/admin/users', {
+                    headers: {'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')}
+                });
+                if (res.status === 401) return;
+                if (!res.ok) throw new Error('Failed to load users');
+                const data = await res.json();
+                const su = document.getElementById('statUsers');
+                const sn = document.getElementById('statUsersNew');
+                if (su) su.textContent = data.total ?? '—';
+                if (sn) sn.textContent = data.new_7d ?? '—';
+                const users = data.users || [];
+                const tbody = document.getElementById('usersBody');
+                const emptyEl = document.getElementById('usersEmpty');
+                if (!users.length) {
+                    tbody.innerHTML = '';
+                    if (emptyEl) emptyEl.style.display = 'block';
+                    return;
+                }
+                if (emptyEl) emptyEl.style.display = 'none';
+                tbody.innerHTML = users.map((u, i) => {
+                    const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || '—';
+                    const uname = u.username ? '@' + u.username : '—';
+                    const joined = u.created_at ? new Date(u.created_at).toLocaleDateString() : '—';
+                    const seen = u.last_login_at ? new Date(u.last_login_at).toLocaleDateString() : '—';
+                    return `
+                        <tr>
+                            <td>${i + 1}</td>
+                            <td>${escapeHtml(name)}</td>
+                            <td>${escapeHtml(uname)}</td>
+                            <td>${escapeHtml(joined)}</td>
+                            <td>${escapeHtml(seen)}</td>
+                            <td><strong>${u.saved_count ?? 0}</strong></td>
+                        </tr>`;
+                }).join('');
+            } catch (e) {
+                const tbody = document.getElementById('usersBody');
+                if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="color:#dc2626;text-align:center">Failed to load users</td></tr>';
+            }
+        }
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text == null ? '' : text;
@@ -290,6 +366,7 @@
         } else {
             loadStats();
             loadAiProviders();
+            loadUsers();
         }
 
         // ── AI Provider Management ───────────────────────────────

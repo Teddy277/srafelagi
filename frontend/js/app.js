@@ -74,6 +74,60 @@ function getChannelHtml(job, options = {}) {
     `;
 }
 
+// ============ EMPLOYER IDENTITY (logos) ============
+/** Deterministic avatar color from a company name — stable across sessions, readable in both themes. */
+function colorFromString(str) {
+    const s = String(str || '?');
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (s.charCodeAt(i) + ((h << 5) - h)) | 0;
+    return `hsl(${Math.abs(h) % 360}, 48%, 52%)`;
+}
+
+// Job boards / link shorteners / mail hosts — these are NOT the employer, so don't show their logo.
+const LOGO_SKIP_DOMAINS = new Set([
+    't.me', 'telegram.org', 'telegram.me', 'telegram.dog',
+    'ethiojobs.net', 'hahu.jobs', 'geezjobs.com', 'afriwork.com', 'freelance.et',
+    'linkedin.com', 'facebook.com', 'twitter.com', 'x.com', 'instagram.com',
+    'docs.google.com', 'forms.gle', 'goo.gl', 'google.com', 'bit.ly', 'tinyurl.com',
+    'gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'wa.me',
+]);
+
+/** Best-effort employer domain from an apply URL (skips aggregators/shorteners). */
+function getEmployerDomain(job) {
+    const url = job && job.apply_url;
+    if (!url || !/^https?:/i.test(url)) return '';
+    try {
+        const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+        for (const d of LOGO_SKIP_DOMAINS) {
+            if (host === d || host.endsWith('.' + d)) return '';
+        }
+        return host;
+    } catch (e) {
+        return '';
+    }
+}
+
+/**
+ * Logo markup for a job. Shows the real employer logo (via Clearbit) when we can
+ * resolve a company domain; otherwise a colored initials avatar. The <img> fails
+ * gracefully (onerror) so the initials always remain as a fallback.
+ */
+function getCompanyLogoHtml(job, opts = {}) {
+    const size = opts.size || 48;
+    const variant = opts.variant || 'card';
+    const name = (job.company || job.title || '?').trim();
+    const letters = variant === 'hero' ? (name.charAt(0) || '?').toUpperCase() : getInitials(name);
+    const domain = getEmployerDomain(job);
+    const img = domain
+        ? `<img src="https://logo.clearbit.com/${escapeAttr(domain)}" alt="" class="company-logo-img" width="${size}" height="${size}" loading="lazy" decoding="async" onerror="this.remove()">`
+        : '';
+    if (variant === 'hero') {
+        return `<div class="modal-hero-logo" aria-hidden="true">${img}<span class="company-logo-letter">${escapeHtml(letters)}</span></div>`;
+    }
+    const color = colorFromString(job.company || job.title || '?');
+    return `<div class="job-logo" style="background:${color};color:#fff;border-color:transparent" aria-hidden="true">${img}<span class="company-logo-letter">${escapeHtml(letters)}</span></div>`;
+}
+
 // ============ STATE ============
 let currentPage = 1;
 let currentFilter = 'all';
@@ -130,10 +184,218 @@ function setSavedJobIds(ids) {
 }
 function toggleSavedJobId(jobId) {
     const ids = getSavedJobIds();
-    if (ids.has(jobId)) ids.delete(jobId);
-    else ids.add(jobId);
+    let saved;
+    if (ids.has(jobId)) { ids.delete(jobId); saved = false; }
+    else { ids.add(jobId); saved = true; }
     setSavedJobIds(ids);
-    return ids.has(jobId);
+    // Mirror to the server when signed in, so saves follow the user across devices.
+    if (getAuthToken()) {
+        fetch(`${API_BASE}/api/saved/${jobId}`, { method: saved ? 'POST' : 'DELETE', headers: authHeaders() }).catch(() => {});
+    }
+    return saved;
+}
+
+// ============ INTEREST PROFILE (powers "Recommended for you") ============
+const INTERESTS_KEY = 'srafelagi_interests';
+const INTEREST_STOPWORDS = new Set([
+    'the', 'and', 'for', 'with', 'job', 'jobs', 'vacancy', 'vacancies', 'needed',
+    'urgent', 'new', 'wanted', 'ethiopia', 'addis', 'ababa', 'fresh', 'graduate',
+    'company', 'plc', 'position', 'role', 'hiring', 'apply', 'required',
+]);
+
+/** Significant lowercase keywords from text (keeps Latin + Amharic, drops noise). */
+function extractKeywords(text) {
+    return String(text || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9ሀ-፿\s]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w.length >= 3 && !INTEREST_STOPWORDS.has(w));
+}
+
+/** Add a weighted interest term (search query, role, etc.) to the local profile. */
+function addInterest(term, weight) {
+    term = String(term || '').trim().toLowerCase();
+    if (term.length < 3) return;
+    try {
+        const obj = JSON.parse(localStorage.getItem(INTERESTS_KEY) || '{}');
+        obj[term] = Math.min((obj[term] || 0) + (weight || 1), 50);
+        const keys = Object.keys(obj);
+        if (keys.length > 40) {
+            keys.sort((a, b) => obj[a] - obj[b]);
+            delete obj[keys[0]]; // evict the weakest signal
+        }
+        localStorage.setItem(INTERESTS_KEY, JSON.stringify(obj));
+    } catch (e) { /* storage unavailable — recommendations just stay empty */ }
+}
+
+/** Record interest in a job by its role keywords (used on view/save). */
+function addJobInterest(job, weight) {
+    if (!job || !job.title) return;
+    const kws = extractKeywords(job.title).slice(0, 2);
+    if (kws.length) addInterest(kws.join(' '), weight);
+}
+
+/** Top N interest terms by weight (most-wanted first). */
+function getTopInterests(n) {
+    try {
+        const obj = JSON.parse(localStorage.getItem(INTERESTS_KEY) || '{}');
+        return Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n).map(e => e[0]);
+    } catch (e) {
+        return [];
+    }
+}
+
+// ============ TELEGRAM LOGIN (no password) ============
+const AUTH_TOKEN_KEY = 'srafelagi_auth_token';
+let currentUser = null;
+
+function getAuthToken() {
+    try { return localStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch (e) { return ''; }
+}
+function setAuthToken(t) {
+    try { localStorage.setItem(AUTH_TOKEN_KEY, t || ''); } catch (e) {}
+}
+function clearAuth() {
+    try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch (e) {}
+    currentUser = null;
+}
+function authHeaders() {
+    const t = getAuthToken();
+    return t ? { 'Authorization': 'Bearer ' + t } : {};
+}
+function authJsonHeaders() {
+    return Object.assign({ 'Content-Type': 'application/json' }, authHeaders());
+}
+
+/** Inject Telegram's official login widget into the navbar (logged-out state). */
+function renderTelegramWidget() {
+    const c = document.getElementById('tgLoginContainer');
+    if (!c) return;
+    const botUser = window.SRAFELAGI_BOT_USERNAME;
+    if (!botUser) { c.innerHTML = ''; return; }
+    if (c.querySelector('script, iframe')) return; // already rendered
+    c.innerHTML = '';
+    const s = document.createElement('script');
+    s.async = true;
+    s.src = 'https://telegram.org/js/telegram-widget.js?22';
+    s.setAttribute('data-telegram-login', botUser);
+    s.setAttribute('data-size', 'medium');
+    s.setAttribute('data-userpic', 'false');
+    s.setAttribute('data-radius', '10');
+    s.setAttribute('data-onauth', 'onTelegramAuth(user)');
+    s.setAttribute('data-request-access', 'write'); // lets the bot message the user later (alerts)
+    c.appendChild(s);
+}
+
+/** Show either the login widget or the user menu based on auth state. */
+function renderAuthUI() {
+    const loginC = document.getElementById('tgLoginContainer');
+    const menu = document.getElementById('userMenu');
+    const signedIn = !!(currentUser && getAuthToken());
+    if (signedIn) {
+        if (loginC) { loginC.hidden = true; loginC.innerHTML = ''; }
+        if (menu) {
+            menu.hidden = false;
+            const name = document.getElementById('userMenuName');
+            const av = document.getElementById('userMenuAvatar');
+            if (name) name.textContent = currentUser.first_name || currentUser.username || 'Me';
+            if (av) {
+                if (currentUser.photo_url) { av.src = currentUser.photo_url; av.style.display = ''; }
+                else { av.removeAttribute('src'); av.style.display = 'none'; }
+            }
+        }
+    } else {
+        if (menu) menu.hidden = true;
+        if (loginC) { loginC.hidden = false; renderTelegramWidget(); }
+    }
+}
+
+/** Telegram widget callback (global) — exchange the signed payload for a session. */
+window.onTelegramAuth = async function (user) {
+    try {
+        const res = await fetch(`${API_BASE}/api/auth/telegram`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(user),
+        });
+        if (!res.ok) { showToast('Telegram sign-in failed. Try again.', 'error'); return; }
+        const data = await res.json();
+        setAuthToken(data.access_token);
+        currentUser = data.user;
+        await mergeAndSyncSaved();           // migrate this device's saves into the account
+        renderAuthUI();
+        showToast('Signed in as ' + (currentUser.first_name || 'you'), 'success');
+        if (currentFilter === 'saved') loadJobs(true);
+    } catch (e) {
+        showToast('Sign-in error. Check your connection.', 'error');
+    }
+};
+
+/** On login: push local saves to the server, then pull the merged set back into localStorage. */
+async function mergeAndSyncSaved() {
+    const localIds = [...getSavedJobIds()];
+    try {
+        let serverIds = [];
+        if (localIds.length) {
+            const res = await fetch(`${API_BASE}/api/saved/merge`, {
+                method: 'POST', headers: authJsonHeaders(), body: JSON.stringify({ job_ids: localIds }),
+            });
+            if (res.ok) serverIds = (await res.json()).ids || [];
+        } else {
+            const res = await fetch(`${API_BASE}/api/saved`, { headers: authHeaders() });
+            if (res.ok) serverIds = (await res.json()).ids || [];
+        }
+        setSavedJobIds(new Set([...localIds, ...serverIds]));
+    } catch (e) { /* keep local saves on failure */ }
+}
+
+function initAuth() {
+    setupUserMenu();
+    const token = getAuthToken();
+    if (!token) { renderAuthUI(); return; }
+    // Restore the session, then reconcile saved jobs across devices.
+    fetch(`${API_BASE}/api/me`, { headers: authHeaders() })
+        .then(res => {
+            if (!res.ok) { clearAuth(); renderAuthUI(); return null; }
+            return res.json();
+        })
+        .then(user => {
+            if (!user) return;
+            currentUser = user;
+            renderAuthUI();
+            return mergeAndSyncSaved();
+        })
+        .catch(() => { renderAuthUI(); });
+}
+
+function setupUserMenu() {
+    const btn = document.getElementById('userMenuBtn');
+    const dd = document.getElementById('userMenuDropdown');
+    if (btn && dd) {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const willOpen = dd.hidden;
+            dd.hidden = !willOpen;
+            btn.setAttribute('aria-expanded', String(willOpen));
+        });
+        document.addEventListener('click', () => {
+            if (!dd.hidden) { dd.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+        });
+    }
+    document.getElementById('userMenuSaved')?.addEventListener('click', () => {
+        currentFilter = 'saved';
+        currentPage = 1;
+        elements.filterTabs.forEach(t => t.classList.toggle('active', (t.dataset.filter || '') === 'saved'));
+        updateUrlFromState(false);
+        loadJobs(true);
+        document.getElementById('jobs')?.scrollIntoView({ behavior: 'smooth' });
+    });
+    document.getElementById('userMenuSignout')?.addEventListener('click', () => {
+        clearAuth();
+        renderAuthUI();
+        showToast('Signed out', 'success');
+        if (currentFilter === 'saved') loadJobs(true);
+    });
 }
 
 // ============ URL PARAMS (SEO-friendly shareable links) ============
@@ -181,10 +443,8 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function init() {
-    // Hide loader after content loads
-    setTimeout(() => {
-        elements.loader.classList.add('hidden');
-    }, 1000);
+    // Hide the intro loader as soon as the shell is ready (no artificial delay)
+    requestAnimationFrame(() => elements.loader?.classList.add('hidden'));
     
     // Initialize components
     initNavbar();
@@ -197,6 +457,7 @@ async function init() {
     initFooter();
     initAlertsForm();
     initAlertsOnboarding();
+    initAuth();
 
     // Show confirmation message if user just confirmed email alert
     const params = new URLSearchParams(window.location.search);
@@ -243,6 +504,7 @@ async function init() {
         loadCategories(),
     ]);
     await loadJobs(true);
+    loadRecommended(); // personalized rail for returning visitors (fire and forget)
 
     // Open job from hash (e.g. shared link #job=123)
     const hashMatch = window.location.hash.match(/^#job=(\d+)$/);
@@ -338,6 +600,7 @@ function performSearch() {
     currentSearch = elements.heroSearch?.value || '';
     currentLocation = elements.heroLocation?.value || '';
     currentPage = 1;
+    if (currentSearch.trim()) addInterest(currentSearch.trim(), 3);
     updateUrlFromState(false);
     loadJobs(true);
 }
@@ -397,23 +660,27 @@ async function loadStats() {
     }
 }
 
+const PREFERS_REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
 function animateNumber(element, target) {
     if (!element) return;
-    
-    const duration = 2000;
-    const start = 0;
-    const increment = target / (duration / 16);
-    let current = start;
-    
-    const timer = setInterval(() => {
-        current += increment;
-        if (current >= target) {
-            element.textContent = formatNumber(target);
-            clearInterval(timer);
-        } else {
-            element.textContent = formatNumber(Math.floor(current));
-        }
-    }, 16);
+    target = Number(target) || 0;
+    // Skip the animation entirely when the device is low on power/data or the
+    // user asked for less motion — one rAF loop is far cheaper than setInterval.
+    if (PREFERS_REDUCED_MOTION || target <= 0) {
+        element.textContent = formatNumber(target);
+        return;
+    }
+    const duration = 1200;
+    const start = performance.now();
+    function tick(now) {
+        const t = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+        element.textContent = formatNumber(Math.floor(target * eased));
+        if (t < 1) requestAnimationFrame(tick);
+        else element.textContent = formatNumber(target);
+    }
+    requestAnimationFrame(tick);
 }
 
 function formatNumber(num) {
@@ -506,6 +773,28 @@ async function loadJobs(reset = false) {
     }
 
     try {
+        // Signed-in "Saved" tab: pull the account's saved jobs from the server
+        // (full objects, all of them — not limited to the latest page).
+        if (currentFilter === 'saved' && getAuthToken()) {
+            const sres = await fetch(`${API_BASE}/api/saved`, { headers: authHeaders() });
+            const sdata = await sres.json();
+            const savedJobs = sdata.jobs || [];
+            setSavedJobIds(new Set(sdata.ids || savedJobs.map(j => j.id)));
+            elements.jobsGrid.innerHTML = '';
+            Object.keys(jobsCache).forEach(k => delete jobsCache[k]);
+            if (!savedJobs.length) {
+                elements.jobsGrid.innerHTML = renderEmptyState();
+            } else {
+                savedJobs.forEach(j => { jobsCache[j.id] = j; });
+                elements.jobsGrid.innerHTML = savedJobs.map(job => renderJobCard(job)).join('');
+            }
+            elements.loadMoreBtn.style.display = 'none';
+            setLoadMoreButtonState(false);
+            renderActiveFilterChips();
+            isLoading = false;
+            return;
+        }
+
         const perPage = currentFilter === 'saved' ? 60 : JOBS_PER_PAGE;
         let url = `${API_BASE}/api/jobs?page=${currentPage}&per_page=${perPage}`;
         if (currentSearch) url += `&search=${encodeURIComponent(currentSearch)}`;
@@ -708,7 +997,6 @@ function stripDescMarkdown(text) {
 }
 
 function renderJobCard(job) {
-    const initials = getInitials(job.company || job.title || 'JB');
     const preview = stripDescMarkdown(job.description || '').substring(0, 120);
     const deadline = cleanField(job.deadline || job.deadline_text);
     const salary = cleanField(job.salary);
@@ -720,7 +1008,7 @@ function renderJobCard(job) {
     return `
         <div class="job-card" onclick="openJobModal(${job.id})" data-job-id="${job.id}">
             <div class="job-card-header">
-                <div class="job-logo">${initials}</div>
+                ${getCompanyLogoHtml(job, { size: 48 })}
                 <div class="job-card-title">
                     <h3>${escapeHtml(job.title || 'Untitled Job')}</h3>
                     ${job.company ? `<span class="company">${escapeHtml(job.company)}</span>` : ''}
@@ -746,6 +1034,7 @@ function renderJobCard(job) {
 
 function toggleSaveCard(jobId, btn) {
     const saved = toggleSavedJobId(jobId);
+    if (saved) addJobInterest(jobsCache[jobId], 2);
     if (!btn) return;
     const icon = btn.querySelector('i');
     if (icon) {
@@ -778,6 +1067,48 @@ elements.loadMoreBtn?.addEventListener('click', () => {
     updateUrlFromState(false);
     loadJobs(false);
 });
+
+// ============ RECOMMENDED FOR YOU ============
+/**
+ * Build a personalized rail from the local interest profile. Queries the top
+ * interest terms, interleaves the results for variety, and renders job cards.
+ * Stays hidden when there isn't enough signal (e.g. a first-time visitor).
+ */
+async function loadRecommended() {
+    const section = document.getElementById('recommended');
+    const rail = document.getElementById('recoRail');
+    if (!section || !rail) return;
+
+    const terms = getTopInterests(3);
+    if (!terms.length) { section.hidden = true; return; }
+
+    try {
+        const lists = await Promise.all(terms.map(t =>
+            fetch(`${API_BASE}/api/jobs?per_page=8&page=1&search=${encodeURIComponent(t)}`)
+                .then(r => (r.ok ? r.json() : { jobs: [] }))
+                .then(d => d.jobs || [])
+                .catch(() => [])
+        ));
+
+        // Round-robin interleave so one strong interest doesn't dominate the rail.
+        const seen = new Set();
+        const merged = [];
+        const maxLen = Math.max(0, ...lists.map(l => l.length));
+        for (let i = 0; i < maxLen && merged.length < 12; i++) {
+            for (const list of lists) {
+                const j = list[i];
+                if (j && !seen.has(j.id)) { seen.add(j.id); merged.push(j); }
+            }
+        }
+
+        if (merged.length < 4) { section.hidden = true; return; }
+        merged.forEach(j => { jobsCache[j.id] = j; });
+        rail.innerHTML = merged.slice(0, 12).map(job => renderJobCard(job)).join('');
+        section.hidden = false;
+    } catch (e) {
+        section.hidden = true;
+    }
+}
 
 // ============ MODAL ============
 function initModal() {
@@ -837,8 +1168,6 @@ function renderModalContent(job, similarJobsHtml) {
     const saved = getSavedJobIds().has(job.id);
     const outUrl = `${API_BASE}/api/out?id=${job.id}`;
     const deadlineInfo = buildDeadlineBadge(deadline);
-
-    const logoLetter = (job.company || job.title || '?').trim().charAt(0).toUpperCase();
 
     // Primary apply action (inline in left column for visual prominence too)
     let applyBlockHtml = '';
@@ -920,7 +1249,7 @@ function renderModalContent(job, similarJobsHtml) {
             <header class="modal-hero">
                 <div class="modal-hero-bg"></div>
                 <div class="modal-hero-inner">
-                    <div class="modal-hero-logo" aria-hidden="true">${escapeHtml(logoLetter)}</div>
+                    ${getCompanyLogoHtml(job, { variant: 'hero', size: 76 })}
                     <div class="modal-hero-text">
                         <h2 id="modalJobTitle" class="modal-hero-title">${escapeHtml(job.title || 'Job Details')}</h2>
                         ${job.company ? `<p class="modal-hero-company">${escapeHtml(job.company)}</p>` : ''}
@@ -1042,6 +1371,7 @@ async function openJobModal(jobId) {
             injectSimilarJobsInBackground(jobId);
         }
         recordJobView(jobId);
+        addJobInterest(job, 1);
         document.dispatchEvent(new Event('srafelagi:jobview'));
     } catch (e) {
         console.error('Failed to load job:', e);
@@ -1093,6 +1423,7 @@ async function getSimilarJobsHtml(excludeId, searchHint) {
 
 function toggleSaveInModal(jobId, btn) {
     const saved = toggleSavedJobId(jobId);
+    if (saved) addJobInterest(jobsCache[jobId], 2);
     const icon = btn?.querySelector('i');
     if (icon) {
         icon.className = saved ? 'fas fa-bookmark' : 'far fa-bookmark';
@@ -1661,26 +1992,69 @@ function getJobShareUrl(jobId) {
     return base + '/job/' + jobId;
 }
 
-async function shareJob(jobId) {
+function shareJob(jobId) {
     const job = jobsCache[jobId];
     const title = job ? (job.title || 'Job') : 'Job';
-    const text = job && job.company ? job.company : '';
-    const url = getJobShareUrl(jobId);
-    if (navigator.share && navigator.canShare && navigator.canShare({ title, text, url })) {
-        try {
-            await navigator.share({ title, text, url });
-            showToast('Shared!', 'success');
-            return;
-        } catch (e) {
-            if (e.name === 'AbortError') return;
+    const company = job && job.company ? ` at ${job.company}` : '';
+    openShareSheet({ url: getJobShareUrl(jobId), title, text: `${title}${company}` });
+}
+
+/** Share menu with Telegram first (our audience's default channel), then WhatsApp, copy, and native share. */
+function openShareSheet({ url, title, text }) {
+    closeShareSheet();
+    const tg = `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`;
+    const wa = `https://wa.me/?text=${encodeURIComponent(text + ' ' + url)}`;
+    const nativeBtn = navigator.share
+        ? `<button type="button" class="share-sheet-btn" data-action="native"><i class="fas fa-ellipsis"></i><span>More apps</span></button>`
+        : '';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'share-sheet-overlay';
+    overlay.id = 'shareSheetOverlay';
+    overlay.innerHTML = `
+        <div class="share-sheet" role="dialog" aria-modal="true" aria-label="Share this job">
+            <div class="share-sheet-head">
+                <span class="share-sheet-title">Share this job</span>
+                <button type="button" class="share-sheet-close" data-action="close" aria-label="Close"><i class="fas fa-times"></i></button>
+            </div>
+            <a class="share-sheet-btn share-sheet-btn--telegram" href="${escapeHtml(tg)}" target="_blank" rel="noopener" data-action="link"><i class="fab fa-telegram"></i><span>Share on Telegram</span></a>
+            <a class="share-sheet-btn share-sheet-btn--whatsapp" href="${escapeHtml(wa)}" target="_blank" rel="noopener" data-action="link"><i class="fab fa-whatsapp"></i><span>Share on WhatsApp</span></a>
+            <button type="button" class="share-sheet-btn" data-action="copy"><i class="fas fa-link"></i><span>Copy link</span></button>
+            ${nativeBtn}
+        </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('visible'));
+
+    overlay.addEventListener('click', async (e) => {
+        if (e.target === overlay) { closeShareSheet(); return; }
+        const actEl = e.target.closest('[data-action]');
+        if (!actEl) return;
+        const action = actEl.dataset.action;
+        if (action === 'close') {
+            closeShareSheet();
+        } else if (action === 'link') {
+            e.preventDefault();
+            window.open(actEl.href, '_blank', 'noopener'); // reliable within the click gesture
+            closeShareSheet();
+        } else if (action === 'copy') {
+            e.preventDefault();
+            try { await navigator.clipboard.writeText(url); showToast('Link copied!', 'success'); }
+            catch (_) { showToast('Copy failed', 'error'); }
+            closeShareSheet();
+        } else if (action === 'native') {
+            e.preventDefault();
+            closeShareSheet();
+            try { await navigator.share({ title, text, url }); } catch (_) { /* user cancelled */ }
         }
-    }
-    try {
-        await navigator.clipboard.writeText(url);
-        showToast('Link copied!', 'success');
-    } catch (e) {
-        showToast('Copy failed', 'error');
-    }
+    });
+    document.addEventListener('keydown', shareSheetEsc);
+}
+
+function shareSheetEsc(e) { if (e.key === 'Escape') closeShareSheet(); }
+
+function closeShareSheet() {
+    document.getElementById('shareSheetOverlay')?.remove();
+    document.removeEventListener('keydown', shareSheetEsc);
 }
 
 function recordApplyEmailClick(jobId) {

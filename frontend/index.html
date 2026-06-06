@@ -20,13 +20,15 @@
     <meta name="twitter:description" content="All Ethiopian job boards and channels in one place. Srafelagi, GeezJobs, Afriwork and more. Updated daily.">
     <meta name="twitter:image" content="https://srafelagi.et/images/og-image.png">
     
-    <!-- Fonts: editorial headline + clean body -->
+    <!-- Fonts: editorial headline + clean body (loaded non-render-blocking) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
-    
-    <!-- Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap"></noscript>
+
+    <!-- Icons (loaded non-render-blocking) -->
+    <link rel="preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"></noscript>
     
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇪🇹</text></svg>">
@@ -75,6 +77,22 @@
             </div>
             
             <div class="nav-actions">
+                <!-- Telegram login (rendered by app.js when logged out) -->
+                <div id="tgLoginContainer" class="tg-login-container"></div>
+
+                <!-- Logged-in user menu (shown by app.js when logged in) -->
+                <div class="user-menu" id="userMenu" hidden>
+                    <button class="user-menu-btn" id="userMenuBtn" aria-haspopup="true" aria-expanded="false">
+                        <img id="userMenuAvatar" class="user-menu-avatar" alt="" width="28" height="28">
+                        <span class="user-menu-name" id="userMenuName">Me</span>
+                        <i class="fas fa-chevron-down user-menu-caret"></i>
+                    </button>
+                    <div class="user-menu-dropdown" id="userMenuDropdown" hidden role="menu">
+                        <button type="button" class="user-menu-item" id="userMenuSaved" role="menuitem"><i class="far fa-bookmark"></i> Saved jobs</button>
+                        <button type="button" class="user-menu-item" id="userMenuSignout" role="menuitem"><i class="fas fa-sign-out-alt"></i> Sign out</button>
+                    </div>
+                </div>
+
                 <button class="btn btn-outline" id="darkModeToggle" aria-label="Toggle dark mode">
                     <i class="fas fa-moon"></i>
                 </button>
@@ -210,6 +228,17 @@
                 <div class="wheel"></div>
             </div>
             <span>Scroll to explore</span>
+        </div>
+    </section>
+
+    <!-- Recommended For You (personalized; hidden until there's enough signal) -->
+    <section class="reco-section" id="recommended" hidden>
+        <div class="container">
+            <div class="section-header section-header-jobs">
+                <h2 class="section-title">Recommended for you</h2>
+                <p class="section-subtitle">Based on what you’ve searched and saved</p>
+            </div>
+            <div class="reco-rail" id="recoRail"></div>
         </div>
     </section>
 
