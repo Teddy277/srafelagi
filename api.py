@@ -632,11 +632,30 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 SITE_BASE_URL = os.getenv("SITE_BASE_URL", DEFAULT_SITE_BASE_URL).strip().rstrip("/")
+
+
+def _public_base_url(request: "Request" = None) -> str:
+    """The canonical origin used for SEO (canonical tags, sitemap, robots, OG).
+
+    Prefers the host the page was actually served from (e.g. https://www.srafelagi.com),
+    so canonical/sitemap/robots always self-reference the real domain a visitor or crawler
+    used — no env juggling required. Render's proxy passes the true Host + https, so
+    request.base_url is correct in production. Falls back to the configured SITE_URL /
+    SITE_BASE_URL (then the local default) only when there's no request context.
+    """
+    if request is not None:
+        host = str(request.base_url).rstrip("/")
+        if host.startswith("http"):
+            return host
+    env = (os.getenv("SITE_URL") or os.getenv("SITE_BASE_URL") or "").strip().rstrip("/")
+    if env.startswith("http"):
+        return env
+    return DEFAULT_SITE_BASE_URL
 SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
-EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER or "noreply@srafelagi.et").strip()
+EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER or "noreply@srafelagi.com").strip()
 
 
 def send_email(to: str, subject: str, body_text: str, body_html: str = None) -> bool:
@@ -1064,7 +1083,7 @@ def _try_openrouter(messages: list, system: str, model: Optional[str] = None) ->
                 resp = _req.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers={"Authorization": f"Bearer {or_key}", "Content-Type": "application/json",
-                             "HTTP-Referer": "https://srafelagi.et", "X-Title": "Srafelagi AI"},
+                             "HTTP-Referer": "https://www.srafelagi.com", "X-Title": "Srafelagi AI"},
                     json={"model": or_model, "messages": or_messages, "max_tokens": 1024, "temperature": 0.7},
                     timeout=25,
                 )
@@ -1623,7 +1642,7 @@ async def admin_test_ai_provider(req: AITestRequest, username: str = Depends(ver
             resp = _req.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers={"Authorization": f"Bearer {keys[0]}", "Content-Type": "application/json",
-                         "HTTP-Referer": "https://srafelagi.et", "X-Title": "Srafelagi AI"},
+                         "HTTP-Referer": "https://www.srafelagi.com", "X-Title": "Srafelagi AI"},
                 json={"model": model,
                       "messages": [{"role": "system", "content": test_system}, {"role": "user", "content": "Reply with exactly the word: OK"}],
                       "max_tokens": 10},
@@ -1844,7 +1863,7 @@ if os.path.exists(FRONTEND_DIR):
               <a class="btn-side-action" href="/#jobs" aria-label="Browse all jobs">
                 <i class="fas fa-th-large"></i><span>Browse</span>
               </a>
-              <a class="btn-side-action" href="mailto:info@srafelagi.et?subject=Report+job&body=Job+URL%3A+{escape(job_url)}" aria-label="Report this job">
+              <a class="btn-side-action" href="mailto:info@srafelagi.com?subject=Report+job&body=Job+URL%3A+{escape(job_url)}" aria-label="Report this job">
                 <i class="fas fa-flag"></i><span>Report</span>
               </a>
             </div>
@@ -1886,7 +1905,7 @@ if os.path.exists(FRONTEND_DIR):
     @app.get("/job/{path:path}", response_class=HTMLResponse)
     async def serve_job_page(path: str, request: Request):
         """Serve a single job as a full HTML page for SEO and sharing. Path: 123 or 123-slug."""
-        base = str(request.base_url).rstrip("/")
+        base = _public_base_url(request)
         job_id_str = path.split("-")[0] if path else ""
         try:
             job_id = int(job_id_str)
@@ -1973,16 +1992,21 @@ if os.path.exists(FRONTEND_DIR):
 
   <!-- Footer CTA bar -->
   <rect x="72" y="528" width="1056" height="64" rx="32" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
-  <text x="600" y="568" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600" fill="#ffffff" text-anchor="middle">Apply now · srafelagi.et</text>
+  <text x="600" y="568" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600" fill="#ffffff" text-anchor="middle">Apply now · srafelagi.com</text>
 </svg>'''
         return Response(content=svg, media_type="image/svg+xml")
     
-    # Serve index.html for root
+    # Serve index.html for root. We read + inject the live canonical origin so the
+    # canonical tag, Open Graph URLs and JSON-LD always match the domain actually
+    # serving the page (instead of a hardcoded, possibly-dead domain).
     @app.get("/")
-    async def serve_index():
+    async def serve_index(request: Request):
         index_path = os.path.join(FRONTEND_DIR, "index.html")
         if os.path.exists(index_path):
-            return FileResponse(index_path)
+            with open(index_path, "r", encoding="utf-8") as f:
+                html = f.read()
+            html = html.replace("%%BASE%%", _public_base_url(request))
+            return HTMLResponse(html)
         return {"error": "index.html not found"}
     
     # Serve favicon
@@ -2051,23 +2075,25 @@ if os.path.exists(FRONTEND_DIR):
 
     # robots.txt
     @app.get("/robots.txt")
-    async def serve_robots():
+    async def serve_robots(request: Request):
         from fastapi.responses import PlainTextResponse
         content = (
             "User-agent: *\n"
             "Allow: /\n"
             "Disallow: /api/\n"
-            "Sitemap: https://srafelagi.et/sitemap.xml\n"
+            "Disallow: /admin/\n"
+            f"Sitemap: {_public_base_url(request)}/sitemap.xml\n"
         )
         return PlainTextResponse(content)
 
     # sitemap.xml — includes dynamic job pages
     @app.get("/sitemap.xml")
-    async def serve_sitemap():
-        BASE = "https://srafelagi.et"
+    async def serve_sitemap(request: Request):
+        BASE = _public_base_url(request)
         today = datetime.utcnow().strftime("%Y-%m-%d")
         urls = [
             f'  <url><loc>{BASE}/</loc><changefreq>daily</changefreq><priority>1.0</priority><lastmod>{today}</lastmod></url>',
+            f'  <url><loc>{BASE}/post-job</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>',
             f'  <url><loc>{BASE}/privacy</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>',
         ]
         for row in db.get_job_ids_for_sitemap():

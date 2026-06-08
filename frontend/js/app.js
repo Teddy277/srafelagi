@@ -1368,7 +1368,7 @@ function renderModalContent(job, similarJobsHtml) {
                     ${channelHtml ? `<div class="modal-channel-row">${channelHtml}</div>` : ''}
                     ${job.source_url ? `<div class="source-section"><a href="${escapeHtml(job.source_url)}" target="_blank" rel="noopener"><i class="fas fa-external-link-alt"></i> View original on source</a></div>` : ''}
                     <p class="modal-report">
-                        <a href="mailto:info@srafelagi.et?subject=${encodeURIComponent('Report job: ' + (job.title || 'Untitled'))}&body=${encodeURIComponent('Job title: ' + (job.title || '') + '\nSource URL: ' + (job.source_url || window.location.href) + '\n\nPlease describe the issue:')}" class="link-muted">
+                        <a href="mailto:info@srafelagi.com?subject=${encodeURIComponent('Report job: ' + (job.title || 'Untitled'))}&body=${encodeURIComponent('Job title: ' + (job.title || '') + '\nSource URL: ' + (job.source_url || window.location.href) + '\n\nPlease describe the issue:')}" class="link-muted">
                             <i class="fas fa-flag"></i> Report this job
                         </a>
                     </p>

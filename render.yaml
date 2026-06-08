@@ -60,6 +60,6 @@ services:
       - key: PORT
         value: "8000"
       - key: SITE_BASE_URL
-        sync: false          # https://srafelagi.onrender.com (your Render URL)
+        sync: false          # https://www.srafelagi.com (your live custom domain)
       - key: SITE_URL
-        sync: false          # same as above (used by Telegram bot)
+        sync: false          # https://www.srafelagi.com (canonical origin for SEO + Telegram links)

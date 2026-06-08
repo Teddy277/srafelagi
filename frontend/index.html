@@ -3,22 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Srafelagi — Jobs in Addis Ababa & Ethiopia 🇪🇹</title>
-    <meta name="description" content="All Ethiopian job boards and channels in one place. Srafelagi, GeezJobs, Afriwork and more. Updated daily.">
-    <!-- Canonical (replace with your live domain) -->
-    <link rel="canonical" href="https://srafelagi.et/">
+    <title>Srafelagi (ስራ ፈላጊ) — Jobs in Addis Ababa & Ethiopia 🇪🇹</title>
+    <meta name="description" content="Srafelagi (ስራ ፈላጊ) brings every Ethiopian job board and Telegram channel into one place — Srafelagi, GeezJobs, Afriwork and more. Search jobs in Addis Ababa and across Ethiopia, updated daily.">
+    <!-- %%BASE%% is replaced by the server with the live domain so canonical/OG always match the real URL -->
+    <link rel="canonical" href="%%BASE%%/">
     <!-- Open Graph -->
     <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Srafelagi">
     <meta property="og:title" content="Srafelagi — Jobs in Addis Ababa & Ethiopia">
-    <meta property="og:description" content="All Ethiopian job boards and channels in one place. Srafelagi, GeezJobs, Afriwork and more. Updated daily.">
-    <meta property="og:url" content="https://srafelagi.et/">
-    <meta property="og:image" content="https://srafelagi.et/images/og-image.png">
+    <meta property="og:description" content="Every Ethiopian job board and Telegram channel in one place. Search jobs in Addis Ababa and across Ethiopia, updated daily.">
+    <meta property="og:url" content="%%BASE%%/">
+    <meta property="og:image" content="%%BASE%%/images/srafelagi.jpg">
     <meta property="og:locale" content="en_US">
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Srafelagi — Jobs in Addis Ababa & Ethiopia">
-    <meta name="twitter:description" content="All Ethiopian job boards and channels in one place. Srafelagi, GeezJobs, Afriwork and more. Updated daily.">
-    <meta name="twitter:image" content="https://srafelagi.et/images/og-image.png">
+    <meta name="twitter:description" content="Every Ethiopian job board and Telegram channel in one place. Search jobs in Addis Ababa and across Ethiopia, updated daily.">
+    <meta name="twitter:image" content="%%BASE%%/images/srafelagi.jpg">
+
+    <!-- Brand structured data: tells Google "Srafelagi" is this site/organization, -->
+    <!-- enables the sitelinks search box, and links official Telegram profiles. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Srafelagi",
+      "alternateName": ["ስራ ፈላጊ", "Srafelagi Jobs", "Srafelagi Ethiopia"],
+      "url": "%%BASE%%/",
+      "description": "Every Ethiopian job board and Telegram channel in one place. Jobs in Addis Ababa and across Ethiopia, updated daily.",
+      "inLanguage": ["en", "am"],
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": { "@type": "EntryPoint", "urlTemplate": "%%BASE%%/?search={search_term_string}" },
+        "query-input": "required name=search_term_string"
+      }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Srafelagi",
+      "alternateName": "ስራ ፈላጊ",
+      "url": "%%BASE%%/",
+      "logo": "%%BASE%%/images/srafelagi.jpg",
+      "description": "Srafelagi aggregates Ethiopian job listings from job boards and Telegram channels into one searchable place.",
+      "sameAs": [
+        "https://t.me/srafelagi",
+        "https://t.me/srafelagi1_bot"
+      ]
+    }
+    </script>
     
     <!-- Fonts: editorial headline + clean body (loaded non-render-blocking) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -449,7 +484,7 @@
                         <li><a href="#about">About Us</a></li>
                         <li><a href="#stats">Statistics</a></li>
                         <li><a href="/privacy">Privacy Policy</a></li>
-                        <li><a href="mailto:info@srafelagi.et">Contact us</a></li>
+                        <li><a href="mailto:info@srafelagi.com">Contact us</a></li>
                     </ul>
                 </div>
                 
@@ -467,7 +502,7 @@
                 <div class="footer-links">
                     <h4>Contact</h4>
                     <ul>
-                        <li><i class="fas fa-envelope"></i> <a href="mailto:info@srafelagi.et">info@srafelagi.et</a></li>
+                        <li><i class="fas fa-envelope"></i> <a href="mailto:info@srafelagi.com">info@srafelagi.com</a></li>
                         <li><i class="fas fa-map-marker-alt"></i> Addis Ababa, Ethiopia</li>
                     </ul>
                 </div>
