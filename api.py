@@ -1672,22 +1672,53 @@ async def admin_select_ai_provider(req: AISelectRequest, username: str = Depends
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
 
+
+class _CachedStaticFiles(StaticFiles):
+    """StaticFiles with a long-lived cache policy (fixes Lighthouse 'efficient cache
+    policy'). Safe to cache for a year because CSS/JS URLs are versioned with
+    ?v=ASSET_VERSION, so every deploy busts the cache; images are content-stable."""
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
+def _compute_asset_version() -> str:
+    """A version string that changes whenever a bundled asset changes, so cache-busted
+    URLs (style.css?v=…, app.js?v=…) always fetch fresh code after a deploy."""
+    candidates = [
+        os.path.join(FRONTEND_DIR, "css", "style.css"),
+        os.path.join(FRONTEND_DIR, "js", "app.js"),
+        os.path.join(FRONTEND_DIR, "js", "assistant.js"),
+    ]
+    try:
+        mtimes = [os.path.getmtime(p) for p in candidates if os.path.exists(p)]
+        if mtimes:
+            return str(int(max(mtimes)))
+    except OSError:
+        pass
+    return str(int(_time.time()))
+
+
+ASSET_VERSION = _compute_asset_version()
+
 # Check if frontend folder exists
 if os.path.exists(FRONTEND_DIR):
     # Mount CSS folder
     css_dir = os.path.join(FRONTEND_DIR, "css")
     if os.path.exists(css_dir):
-        app.mount("/css", StaticFiles(directory=css_dir), name="css")
+        app.mount("/css", _CachedStaticFiles(directory=css_dir), name="css")
 
     # Mount JS folder
     js_dir = os.path.join(FRONTEND_DIR, "js")
     if os.path.exists(js_dir):
-        app.mount("/js", StaticFiles(directory=js_dir), name="js")
-    
+        app.mount("/js", _CachedStaticFiles(directory=js_dir), name="js")
+
     # Mount images folder (if exists)
     img_dir = os.path.join(FRONTEND_DIR, "images")
     if os.path.exists(img_dir):
-        app.mount("/images", StaticFiles(directory=img_dir), name="images")
+        app.mount("/images", _CachedStaticFiles(directory=img_dir), name="images")
 
     # ============ JOB PAGE (SEO, shareable URL) ============
     def _job_page_html(job: dict, base: str) -> str:
@@ -2005,8 +2036,11 @@ if os.path.exists(FRONTEND_DIR):
         if os.path.exists(index_path):
             with open(index_path, "r", encoding="utf-8") as f:
                 html = f.read()
-            html = html.replace("%%BASE%%", _public_base_url(request))
-            return HTMLResponse(html)
+            html = (html.replace("%%BASE%%", _public_base_url(request))
+                        .replace("%%V%%", ASSET_VERSION))
+            # Don't let the HTML itself stick in cache, or it could keep pointing at an
+            # old ?v= after a deploy. The asset files (css/js) are the ones cached hard.
+            return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
         return {"error": "index.html not found"}
     
     # Serve favicon
