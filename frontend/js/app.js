@@ -921,8 +921,11 @@ async function loadJobs(reset = false) {
             elements.loadMoreBtn.style.display = 'none';
         } else {
             jobs.forEach(j => { jobsCache[j.id] = j; });
-            const jobsHtml = jobs.map(job => renderJobCard(job)).join('');
-            elements.jobsGrid.innerHTML += jobsHtml;
+            // Append rather than `innerHTML +=`: re-parsing the whole grid would reset
+            // ad iframes that already loaded (and redo every earlier card for nothing).
+            const shownBefore = elements.jobsGrid.querySelectorAll('.job-card').length;
+            elements.jobsGrid.insertAdjacentHTML('beforeend', renderJobCardsWithAds(jobs, shownBefore));
+            activateFeedAds(elements.jobsGrid);
             const pages = currentFilter === 'saved' ? 1 : data.pages;
             elements.loadMoreBtn.style.display = currentPage >= pages ? 'none' : 'inline-flex';
             if (reset) injectJobListStructuredData(jobs);
@@ -1090,6 +1093,33 @@ function stripDescMarkdown(text) {
         .replace(/^#+\s*/gm, '')
         .replace(/^-\s+/gm, '')
         .trim();
+}
+
+// ============ ADS (Google AdSense) ============
+// The server sets window.SRAFELAGI_ADS only when AdSense is configured; with no
+// feedSlot this is a no-op and the grid renders exactly as before.
+const FEED_AD_EVERY = 8;
+
+function renderJobCardsWithAds(jobs, shownBefore) {
+    const ads = window.SRAFELAGI_ADS || {};
+    return jobs.map((job, i) => {
+        const card = renderJobCard(job);
+        const n = shownBefore + i + 1;
+        if (!ads.client || !ads.feedSlot || n % FEED_AD_EVERY !== 0) return card;
+        return card + `
+            <div class="ad-slot ad-slot-feed">
+                <span class="ad-label">Advertisement</span>
+                <ins class="adsbygoogle" style="display:block" data-ad-client="${escapeHtml(ads.client)}"
+                     data-ad-slot="${escapeHtml(ads.feedSlot)}" data-ad-format="auto" data-full-width-responsive="true"></ins>
+            </div>`;
+    }).join('');
+}
+
+function activateFeedAds(container) {
+    container.querySelectorAll('ins.adsbygoogle:not([data-ad-requested])').forEach(el => {
+        el.setAttribute('data-ad-requested', '1');
+        try { (window.adsbygoogle = window.adsbygoogle || []).push({}); } catch (_) { /* blocked or not loaded */ }
+    });
 }
 
 function renderJobCard(job) {

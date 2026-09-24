@@ -797,6 +797,28 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
     gap: 20px;
 }
 
+/* Ad units (Google AdSense). Feed ads span the whole grid row so cards keep their rhythm. */
+.ad-slot {
+    margin: 24px 0;
+    text-align: center;
+}
+.ad-slot-feed {
+    grid-column: 1 / -1;
+    margin: 4px 0;
+}
+.ad-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+/* Collapse the slot when AdSense returns no ad (it marks the <ins> "unfilled"). */
+.ad-slot:has(ins[data-ad-status="unfilled"]) {
+    display: none;
+}
+
 .job-card {
     background: var(--bg-primary);
     border-radius: var(--radius-lg);

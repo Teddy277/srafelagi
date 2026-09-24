@@ -34,6 +34,14 @@ services:
       - key: GEMINI_MODEL
         value: gemini-2.0-flash
 
+      # ── Google AdSense (site shows no ads until ADSENSE_CLIENT is set) ──
+      - key: ADSENSE_CLIENT
+        sync: false          # ca-pub-XXXXXXXXXXXXXXXX  (AdSense → Account → Account information)
+      - key: ADSENSE_SLOT_FEED
+        sync: false          # ad-unit ID for ads between job cards (AdSense → Ads → By ad unit → Display ads)
+      - key: ADSENSE_SLOT_JOB
+        sync: false          # ad-unit ID for the ad on each /job/... page
+
       # ── Admin ─────────────────────────────────────────────
       - key: ADMIN_USERNAME
         sync: false

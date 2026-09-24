@@ -1703,6 +1703,59 @@ def _compute_asset_version() -> str:
 
 ASSET_VERSION = _compute_asset_version()
 
+
+# ============ GOOGLE ADSENSE ============
+# The publisher ID is public (it ships in every page), so it defaults here; set
+# ADSENSE_CLIENT="" to switch AdSense off entirely.
+#   ADSENSE_CLIENT     publisher ID, e.g. "ca-pub-1234567890123456" (AdSense → Account → Account information)
+#   ADSENSE_SLOT_FEED  ad-unit ID of a Display unit shown after every 8th job card (optional)
+#   ADSENSE_SLOT_JOB   ad-unit ID of a Display unit shown on /job/... pages (optional)
+# With only ADSENSE_CLIENT set, the loader script is present, which is what AdSense
+# needs to verify the site, and Auto ads (toggled in the AdSense dashboard) can run.
+ADSENSE_CLIENT = os.getenv("ADSENSE_CLIENT", "ca-pub-9546131700480069").strip()
+if ADSENSE_CLIENT and not ADSENSE_CLIENT.startswith("ca-pub-"):
+    ADSENSE_CLIENT = f"ca-{ADSENSE_CLIENT}" if ADSENSE_CLIENT.startswith("pub-") else ""
+ADSENSE_SLOT_FEED = os.getenv("ADSENSE_SLOT_FEED", "").strip()
+ADSENSE_SLOT_JOB = os.getenv("ADSENSE_SLOT_JOB", "").strip()
+
+
+def _adsense_head() -> str:
+    """AdSense loader tag for <head>; empty when AdSense isn't configured."""
+    if not ADSENSE_CLIENT:
+        return ""
+    return (
+        f'<meta name="google-adsense-account" content="{ADSENSE_CLIENT}">\n'
+        f'<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js'
+        f'?client={ADSENSE_CLIENT}" crossorigin="anonymous"></script>'
+    )
+
+
+def _adsense_config_js() -> str:
+    """Tells app.js which ad units exist (it only renders in-feed ads if a slot is set)."""
+    cfg = {"client": ADSENSE_CLIENT, "feedSlot": ADSENSE_SLOT_FEED} if ADSENSE_CLIENT else {}
+    return f"<script>window.SRAFELAGI_ADS = {json.dumps(cfg)};</script>"
+
+
+def _page_with_adsense(path: str) -> HTMLResponse:
+    """Serve a static HTML page with the AdSense loader swapped in for its marker."""
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404)
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+    return HTMLResponse(html.replace("<!--%%ADSENSE_HEAD%%-->", _adsense_head()))
+
+
+def _adsense_unit(slot: str, fmt: str = "auto") -> str:
+    """A responsive manual ad unit; empty unless both publisher and slot are set."""
+    if not (ADSENSE_CLIENT and slot):
+        return ""
+    return (
+        '<div class="ad-slot"><span class="ad-label">Advertisement</span>'
+        f'<ins class="adsbygoogle" style="display:block" data-ad-client="{ADSENSE_CLIENT}" '
+        f'data-ad-slot="{slot}" data-ad-format="{fmt}" data-full-width-responsive="true"></ins>'
+        '<script>(adsbygoogle = window.adsbygoogle || []).push({});</script></div>'
+    )
+
 # Check if frontend folder exists
 if os.path.exists(FRONTEND_DIR):
     # Mount CSS folder
@@ -1816,7 +1869,8 @@ if os.path.exists(FRONTEND_DIR):
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇪🇹</text></svg>">
-<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/style.css?v={ASSET_VERSION}">
+{_adsense_head()}
 <style>
 .job-page-shell {{ padding: 110px 0 80px; background: var(--bg-canvas); min-height: 100vh; }}
 .job-page-wrap {{ max-width: 1100px; margin: 0 auto; padding: 0 24px; }}
@@ -1876,6 +1930,7 @@ if os.path.exists(FRONTEND_DIR):
           <div class="description-section">
             <div class="description-text">{desc_html}</div>
           </div>
+          {_adsense_unit(ADSENSE_SLOT_JOB)}
           {f'<div class="source-section"><a href="{escape(job.get("source_url") or "")}" target="_blank" rel="noopener"><i class="fas fa-external-link-alt"></i> View original on source</a></div>' if job.get("source_url") else ''}
         </main>
 
@@ -2037,7 +2092,8 @@ if os.path.exists(FRONTEND_DIR):
             with open(index_path, "r", encoding="utf-8") as f:
                 html = f.read()
             html = (html.replace("%%BASE%%", _public_base_url(request))
-                        .replace("%%V%%", ASSET_VERSION))
+                        .replace("%%V%%", ASSET_VERSION)
+                        .replace("<!--%%ADSENSE_HEAD%%-->", _adsense_head() + _adsense_config_js()))
             # Don't let the HTML itself stick in cache, or it could keep pointing at an
             # old ?v= after a deploy. The asset files (css/js) are the ones cached hard.
             return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
@@ -2054,18 +2110,12 @@ if os.path.exists(FRONTEND_DIR):
     # Serve privacy page
     @app.get("/privacy")
     async def serve_privacy():
-        privacy_path = os.path.join(FRONTEND_DIR, "privacy.html")
-        if os.path.exists(privacy_path):
-            return FileResponse(privacy_path)
-        raise HTTPException(status_code=404)
+        return _page_with_adsense(os.path.join(FRONTEND_DIR, "privacy.html"))
 
     # Serve the company "Post a Job" page
     @app.get("/post-job")
     async def serve_post_job():
-        p = os.path.join(FRONTEND_DIR, "post-job.html")
-        if os.path.exists(p):
-            return FileResponse(p)
-        raise HTTPException(status_code=404)
+        return _page_with_adsense(os.path.join(FRONTEND_DIR, "post-job.html"))
 
     # PWA manifest
     @app.get("/manifest.json")
@@ -2119,6 +2169,16 @@ if os.path.exists(FRONTEND_DIR):
             f"Sitemap: {_public_base_url(request)}/sitemap.xml\n"
         )
         return PlainTextResponse(content)
+
+    # ads.txt — declares Google as an authorized ad seller. AdSense flags the site
+    # ("earnings at risk") without it. Built from ADSENSE_CLIENT so there's one source.
+    @app.get("/ads.txt")
+    async def serve_ads_txt():
+        from fastapi.responses import PlainTextResponse
+        if not ADSENSE_CLIENT:
+            raise HTTPException(status_code=404)
+        pub = ADSENSE_CLIENT.replace("ca-", "", 1)
+        return PlainTextResponse(f"google.com, {pub}, DIRECT, f08c47fec0942fa0\n")
 
     # sitemap.xml — includes dynamic job pages
     @app.get("/sitemap.xml")
