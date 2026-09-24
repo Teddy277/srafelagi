@@ -3,6 +3,7 @@ Srafelagi API - Complete Version
 """
 import os
 import json
+import re
 import socket
 import hashlib
 import hmac
@@ -1690,6 +1691,7 @@ def _compute_asset_version() -> str:
     candidates = [
         os.path.join(FRONTEND_DIR, "css", "style.css"),
         os.path.join(FRONTEND_DIR, "js", "app.js"),
+        os.path.join(FRONTEND_DIR, "js", "job-format.js"),
         os.path.join(FRONTEND_DIR, "js", "assistant.js"),
     ]
     try:
@@ -1734,6 +1736,13 @@ def _adsense_config_js() -> str:
     """Tells app.js which ad units exist (it only renders in-feed ads if a slot is set)."""
     cfg = {"client": ADSENSE_CLIENT, "feedSlot": ADSENSE_SLOT_FEED} if ADSENSE_CLIENT else {}
     return f"<script>window.SRAFELAGI_ADS = {json.dumps(cfg)};</script>"
+
+
+def _json_for_script(value) -> str:
+    """JSON safe to inline in a <script> block (can't close the tag or open a comment)."""
+    return (json.dumps(value, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
 
 
 def _page_with_adsense(path: str) -> HTMLResponse:
@@ -1807,8 +1816,10 @@ if os.path.exists(FRONTEND_DIR):
             apply_cta = '<p class="apply-note">Apply via the source link in the description.</p>'
             inline_apply = ""
 
-        # Format description into paragraphs / bullets
-        raw_desc = (job.get("description") or "")[:8000]
+        # No-JS / crawler fallback: paragraphs + bullets. In the browser, js/job-format.js
+        # replaces this with the same structured layout the job modal uses.
+        # Tags are stripped (descriptions can carry <a> links) so they don't print as text.
+        raw_desc = re.sub(r"<[^>]+>", "", (job.get("description") or "")[:8000])
         paragraphs = []
         for block in [p.strip() for p in raw_desc.split("\n\n") if p.strip()]:
             lines = [l.strip() for l in block.split("\n") if l.strip()]
@@ -1928,7 +1939,7 @@ if os.path.exists(FRONTEND_DIR):
         <main class="modal-main">
           {f'<div class="apply-section"><h4><i class="fas fa-paper-plane"></i> How to Apply</h4>{inline_apply}</div>' if inline_apply else ''}
           <div class="description-section">
-            <div class="description-text">{desc_html}</div>
+            <div class="description-text" id="jobDescription">{desc_html}</div>
           </div>
           {_adsense_unit(ADSENSE_SLOT_JOB)}
           {f'<div class="source-section"><a href="{escape(job.get("source_url") or "")}" target="_blank" rel="noopener"><i class="fas fa-external-link-alt"></i> View original on source</a></div>' if job.get("source_url") else ''}
@@ -1983,6 +1994,19 @@ if os.path.exists(FRONTEND_DIR):
     var n = document.getElementById('navbar');
     if (n) n.classList.toggle('scrolled', window.scrollY > 10);
   }}, {{ passive: true }});
+</script>
+<script src="/js/job-format.js?v={ASSET_VERSION}"></script>
+<script>
+  // Same structured layout as the job modal (headings, fact rows, lists, section blocks)
+  (function() {{
+    var el = document.getElementById('jobDescription');
+    if (!el || typeof formatJobDescription !== 'function') return;
+    var job = {_json_for_script({"title": job.get("title") or "", "description": job.get("description") or ""})};
+    var title = displayJobTitle(job);
+    el.innerHTML = formatJobDescription(job.description, {{ title: title }});
+    var h = document.querySelector('.modal-hero-title');
+    if (h && title && title !== job.title) h.textContent = title;
+  }})();
 </script>
 <script src="/js/assistant.js"></script>
 </body>

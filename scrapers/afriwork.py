@@ -14,6 +14,7 @@ FIXES APPLIED:
 
 import re
 import asyncio
+import json
 import logging
 from typing import Optional, Dict, List
 import aiohttp
@@ -167,6 +168,190 @@ class AfriworkScraper(BaseScraper):
         except Exception as e:
             logger.error(f"   aiohttp fallback failed: {e}")
         return None
+
+    # ─── Embedded job data (preferred path) ─────────────────
+
+    async def fetch_embedded_job(self, url: str) -> Optional[Dict]:
+        """
+        Return the job record Nuxt embeds in the page (the `jobs_by_pk`
+        GraphQL result inside <script id="__NUXT_DATA__">), or None.
+
+        The server-rendered HTML carries the complete job, including the
+        full description, but only as data: without running JS the
+        visible text stops at the company name. Reading the data needs no
+        browser, so it works where Playwright isn't installed (Render).
+        """
+        headers = {
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36'
+            ),
+            'Accept': 'text/html,application/xhtml+xml',
+        }
+        try:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers=headers, ssl=False) as resp:
+                    if resp.status != 200:
+                        return None
+                    html = await resp.text()
+        except Exception as e:
+            logger.warning(f"   Embedded-data fetch failed: {e}")
+            return None
+        return self.parse_embedded_job(html)
+
+    @staticmethod
+    def parse_embedded_job(html: str) -> Optional[Dict]:
+        match = re.search(
+            r'<script[^>]*id="__NUXT_DATA__"[^>]*>(.*?)</script>', html, re.S
+        )
+        if not match:
+            return None
+        try:
+            payload = json.loads(match.group(1))
+        except ValueError:
+            return None
+        # Nuxt serialises state as a flat array; the GraphQL response is
+        # one of its entries, stored as a JSON string.
+        for value in payload if isinstance(payload, list) else []:
+            if isinstance(value, str) and '"jobs_by_pk"' in value:
+                try:
+                    job = json.loads(value).get('jobs_by_pk')
+                except ValueError:
+                    continue
+                if isinstance(job, dict) and job.get('title'):
+                    return job
+        return None
+
+    @staticmethod
+    def html_to_text(html: str) -> str:
+        """
+        Afriwork's rich-text HTML → the plain-text layout the rest of the
+        site uses: blank line between paragraphs, "• " per list item,
+        links kept as "text (url)" when the text alone would lose the URL.
+        """
+        soup = BeautifulSoup(html or '', 'html.parser')
+        for br in soup.find_all('br'):
+            br.replace_with('\n')
+        for a in soup.find_all('a'):
+            href = (a.get('href') or '').strip()
+            text = a.get_text(strip=True)
+            if href.startswith('http') and text and text not in href:
+                a.replace_with(f"{text} ({href})")
+            else:
+                a.replace_with(text or href)
+
+        blocks = []
+        for el in soup.find_all(['p', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+            # A <p> inside an <li> is emitted by the <li> itself
+            if el.name == 'p' and el.find_parent('li'):
+                continue
+            text = '\n'.join(
+                ' '.join(line.split()) for line in el.get_text().split('\n')
+            ).strip()
+            if not text:
+                continue
+            blocks.append(('li' if el.name == 'li' else 'p', text))
+
+        out = []
+        for i, (kind, text) in enumerate(blocks):
+            if kind == 'li':
+                out.append(f"• {text}")
+            else:
+                if out:
+                    out.append('')
+                out.append(text)
+            # Blank line after the last item of a list
+            if kind == 'li' and i + 1 < len(blocks) and blocks[i + 1][0] != 'li':
+                out.append('')
+        return re.sub(r'\n{3,}', '\n\n', '\n'.join(out)).strip()
+
+    def _fill_from_embedded(self, job: Dict, result: ScrapedJob) -> None:
+        """Populate `result` from the embedded `jobs_by_pk` record."""
+        from datetime import datetime as _dt
+
+        def name(obj, *keys):
+            for k in keys:
+                obj = obj.get(k) if isinstance(obj, dict) else None
+            return obj or None
+
+        entity = job.get('entity') or {}
+        if entity.get('type') == 'private_client':
+            company = 'Private Client'  # entity name is a private person
+        else:
+            company = entity.get('name')
+
+        city = name(job, 'city', 'en') or name(job, 'city', 'name')
+        country = name(job, 'city', 'country', 'en')
+        location = ', '.join(p for p in (city, country) if p) or None
+        if not location and job.get('job_site') == 'REMOTE':
+            location = 'Remote'
+
+        deadline = None
+        if job.get('deadline'):
+            try:
+                d = _dt.fromisoformat(job['deadline'].replace('Z', '+00:00'))
+                deadline = f"{d:%B} {d.day}, {d.year}"
+            except ValueError:
+                deadline = job['deadline'][:10]
+
+        salary = None
+        cents = job.get('compensation_amount_cents')
+        if cents:
+            amount = f"{cents / 100:,.0f} {job.get('compensation_currency') or 'ETB'}"
+            period = (job.get('compensation_type') or '').replace('_', ' ').title()
+            salary = self._format_salary(amount, period or None)
+
+        job_type = ' - '.join(
+            p.replace('_', ' ').title()
+            for p in (job.get('job_site'), job.get('job_type')) if p
+        ) or None
+        skills = ', '.join(
+            s for s in (name(r, 'skill', 'name') for r in job.get('skill_requirements') or []) if s
+        ) or None
+        sectors = [name(s, 'sector', 'name') for s in job.get('sectors') or []]
+
+        body = self.html_to_text(job.get('description') or '')
+
+        result.title = job.get('title')
+        result.company = company
+        result.location = location
+        result.deadline = deadline
+        result.salary = salary
+
+        # Details not shown in the page header (company/location/salary/
+        # deadline already are), then the employer's own description.
+        details = [
+            ('Job Type', job_type),
+            ('Education', name(job, 'education_level', 'name')),
+            ('Experience', (job.get('experience_level') or '').title() or None),
+            ('Vacancies', job.get('vacancy_count')),
+            ('Skills', skills),
+        ]
+        parts = [f"{label}: {value}" for label, value in details if value]
+        if parts and body:
+            parts.append('')
+        if body:
+            parts.append(body)
+        result.description = '\n'.join(parts)
+
+        for email in self.EMAIL_PATTERN.findall(body):
+            if self.is_valid_email(email):
+                result.apply_email = email.lower().strip()
+                result.apply_type = 'email'
+                break
+
+        result.scraped_data = {
+            'source': 'afriwork_embedded',
+            'uuid': job.get('id'),
+            'category': next((s for s in sectors if s), None),
+            'salary': salary,
+            'education': name(job, 'education_level', 'name'),
+            'experience': job.get('experience_level'),
+            'vacancies': job.get('vacancy_count'),
+            'skills': skills,
+        }
+        result.success = bool(result.title and body)
 
     # ─── Parsing Helpers ────────────────────────────────────
 
@@ -712,6 +897,19 @@ class AfriworkScraper(BaseScraper):
 
             job_url = f"{self.BASE_URL}/jobs/{uuid}"
             result.source_url = job_url
+
+            # ── Step 1b: Embedded job data (full description, no browser) ──
+            embedded = await self.fetch_embedded_job(job_url)
+            if embedded:
+                self._fill_from_embedded(embedded, result)
+                if result.success:
+                    logger.info(
+                        f"   Done (embedded data): {result.title}"
+                        f" | {len(result.description)} chars"
+                        f" | Company: {result.company}"
+                    )
+                    return result
+                logger.warning("   Embedded data had no description; trying page text")
 
             # ── Step 2: Fetch rendered page ─────────────────
             text = await self.fetch_with_playwright(job_url)

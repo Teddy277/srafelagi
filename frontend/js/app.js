@@ -1089,6 +1089,13 @@ function cleanField(val) {
 function stripDescMarkdown(text) {
     if (!text) return '';
     return String(text)
+        .replace(/<[^>]+>/g, '')
+        // Scraper leftovers that make useless previews: separators, empty "Job Type: :" rows,
+        // Afriwork's site banner captured as a category
+        .replace(/^.*want to apply easily from your phone.*$/gim, '')
+        .replace(/^[=\-_*~]{4,}\s*$/gm, '')
+        .replace(/^[^:\n]{1,40}:\s*:\s*$/gm, '')
+        .replace(/\n{2,}/g, '\n')
         .replace(/\*\*/g, '')
         .replace(/^#+\s*/gm, '')
         .replace(/^-\s+/gm, '')
@@ -1136,7 +1143,7 @@ function renderJobCard(job) {
             <div class="job-card-header">
                 ${getCompanyLogoHtml(job, { size: 48 })}
                 <div class="job-card-title">
-                    <h3>${escapeHtml(job.title || 'Untitled Job')}</h3>
+                    <h3>${escapeHtml(displayJobTitle(job) || 'Untitled Job')}</h3>
                     ${job.company ? `<span class="company">${escapeHtml(job.company)}</span>` : ''}
                 </div>
                 <button class="btn job-card-save ${saved ? 'saved' : ''}" onclick="event.stopPropagation(); toggleSaveCard(${job.id}, this)" aria-label="Save job">
@@ -1356,7 +1363,7 @@ function renderModalContent(job, similarJobsHtml) {
         sidebarApplyHtml = `<p class="apply-note">Apply via the source link in the description.</p>`;
     }
 
-    elements.modalStickyTitle.textContent = job.title || 'Job';
+    elements.modalStickyTitle.textContent = displayJobTitle(job) || 'Job';
     elements.modalStickyActions.innerHTML = stickyActionsHtml;
     elements.modalStickyApply.classList.remove('visible');
 
@@ -1377,7 +1384,7 @@ function renderModalContent(job, similarJobsHtml) {
                 <div class="modal-hero-inner">
                     ${getCompanyLogoHtml(job, { variant: 'hero', size: 76 })}
                     <div class="modal-hero-text">
-                        <h2 id="modalJobTitle" class="modal-hero-title">${escapeHtml(job.title || 'Job Details')}</h2>
+                        <h2 id="modalJobTitle" class="modal-hero-title">${escapeHtml(displayJobTitle(job) || 'Job Details')}</h2>
                         ${job.company ? `<p class="modal-hero-company">${escapeHtml(job.company)}</p>` : ''}
                         <div class="modal-hero-meta">
                             ${job.location ? `<span><i class="fas fa-map-marker-alt"></i> ${escapeHtml(job.location)}</span>` : ''}
@@ -1393,7 +1400,7 @@ function renderModalContent(job, similarJobsHtml) {
                 <main class="modal-main">
                     ${applyBlockHtml}
                     <div class="description-section">
-                        <div class="description-text">${formatJobDescription(job.description)}</div>
+                        <div class="description-text">${formatJobDescription(job.description, { title: displayJobTitle(job) })}</div>
                     </div>
                     ${channelHtml ? `<div class="modal-channel-row">${channelHtml}</div>` : ''}
                     ${job.source_url ? `<div class="source-section"><a href="${escapeHtml(job.source_url)}" target="_blank" rel="noopener"><i class="fas fa-external-link-alt"></i> View original on source</a></div>` : ''}
@@ -1526,13 +1533,14 @@ async function getSimilarJobsHtml(excludeId, searchHint) {
                 </header>
                 <div class="similar-jobs-rail">
                     ${jobs.map(j => {
-                        const letter = (j.company || j.title || '?').trim().charAt(0).toUpperCase();
+                        // First letter or digit: titles often start with an emoji, and charAt(0) would split it
+                        const letter = ((j.company || displayJobTitle(j) || '').match(/[\p{L}\p{N}]/u) || ['?'])[0].toUpperCase();
                         const dl = buildDeadlineBadge(j.deadline || j.deadline_text || '');
                         return `
                         <button type="button" class="similar-job-card" onclick="closeModal(); openJobModal(${j.id});">
                             <span class="similar-job-logo" aria-hidden="true">${escapeHtml(letter)}</span>
                             <span class="similar-job-body">
-                                <span class="similar-job-title">${escapeHtml(j.title || 'Job')}</span>
+                                <span class="similar-job-title">${escapeHtml(displayJobTitle(j) || 'Job')}</span>
                                 ${j.company ? `<span class="similar-job-company">${escapeHtml(j.company)}</span>` : ''}
                                 <span class="similar-job-meta">
                                     ${j.location ? `<span><i class="fas fa-map-marker-alt"></i> ${escapeHtml(j.location)}</span>` : ''}
@@ -1938,164 +1946,8 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-const ALLOWED_DESC_TAGS = new Set(['A', 'BR', 'P', 'UL', 'OL', 'LI', 'STRONG', 'B', 'EM', 'I']);
-const ALLOWED_ATTRS = { A: new Set(['href', 'target', 'rel']) };
-
-function sanitizeDescriptionHtml(html) {
-    if (!html) return '';
-    const div = document.createElement('div');
-    div.innerHTML = String(html);
-    function sanitizeNode(parent) {
-        const nodes = Array.from(parent.childNodes);
-        for (const n of nodes) {
-            if (n.nodeType === Node.TEXT_NODE) continue;
-            if (n.nodeType === Node.ELEMENT_NODE) {
-                const tag = n.tagName.toUpperCase();
-                if (!ALLOWED_DESC_TAGS.has(tag)) {
-                    parent.removeChild(n);
-                    continue;
-                }
-                const attrs = ALLOWED_ATTRS[tag];
-                if (attrs) {
-                    for (const a of Array.from(n.attributes)) {
-                        if (!attrs.has(a.name.toLowerCase())) n.removeAttribute(a.name);
-                    }
-                }
-                sanitizeNode(n);
-            }
-        }
-    }
-    sanitizeNode(div);
-    return div.innerHTML;
-}
-
-/** Protect <a> tags with placeholders so we can split on \n\n without breaking them. */
-function protectLinks(html) {
-    const links = [];
-    const placeholder = '___LINK_PLACEHOLDER_';
-    const out = html.replace(/<a\s[^>]*>[\s\S]*?<\/a>/gi, (m) => {
-        links.push(m);
-        return placeholder + (links.length - 1) + '___';
-    });
-    return { text: out, links };
-}
-
-function restoreLinks(text, links) {
-    let out = text;
-    for (let i = 0; i < links.length; i++) {
-        out = out.replace('___LINK_PLACEHOLDER_' + i + '___', links[i]);
-    }
-    return out;
-}
-
-/** Turn plain text with newlines into <p> and optional <ul>/<li>. */
-function normalizeDescriptionStructure(html) {
-    if (!html || !html.trim()) return html;
-    const trimmed = html.trim();
-    if (/<p[\s>]|<ul[\s>]|<ol[\s>]/i.test(trimmed)) return html;
-    const { text, links } = protectLinks(trimmed);
-    const paragraphs = text.split(/\n\n+/);
-    const result = paragraphs.map(block => {
-        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-        const bulletLike = /^[\-\*•·]\s|^\d+[.)]\s/;
-        const allBullets = lines.length >= 1 && lines.every(l => bulletLike.test(l));
-        if (allBullets && lines.length >= 1) {
-            const items = lines.map(l => restoreLinks(escapeHtml(l.replace(bulletLike, '')), links));
-            return '<ul><li>' + items.join('</li><li>') + '</li></ul>';
-        }
-        const inner = restoreLinks(escapeHtml(block).replace(/\n/g, '<br>'), links);
-        return '<p>' + inner + '</p>';
-    }).join('');
-    return restoreLinks(result, links);
-}
-
-function formatJobDescription(description) {
-    if (!description) return escapeHtml('No description available.');
-    const safe = sanitizeDescriptionHtml(description);
-    const structured = normalizeDescriptionStructure(safe);
-    return decorateSections(structured);
-}
-
-/** Section heading detector — matches AI output (English + Amharic) */
-const SECTION_DEFS = [
-    { key: 'about',   icon: 'fa-circle-info',         labels: ['about the role', 'about the position', 'about the job', 'role overview', 'overview', 'job summary', 'ስለ ስራው', 'ስለ ሥራው'] },
-    { key: 'resp',    icon: 'fa-list-check',          labels: ['responsibilities', 'duties', 'key responsibilities', 'what you\'ll do', 'what you will do', 'role responsibilities', 'ኃላፊነቶች', 'ሃላፊነቶች', 'ተግባራት'] },
-    { key: 'req',     icon: 'fa-user-check',          labels: ['requirements', 'qualifications', 'minimum qualifications', 'required skills', 'who you are', 'ብቃቶች', 'መስፈርቶች', 'ችሎታዎች'] },
-    { key: 'benefits',icon: 'fa-gift',                labels: ['benefits', 'what we offer', 'perks', 'compensation', 'ጥቅማ ጥቅሞች', 'ጥቅማጥቅሞች'] },
-    { key: 'apply',   icon: 'fa-paper-plane',         labels: ['how to apply', 'apply', 'application', 'application process', 'to apply', 'የመጠየቂያ ሂደት', 'እንዴት ማመልከት', 'ለማመልከት'] },
-];
-
-function matchSection(text) {
-    const norm = String(text || '').toLowerCase().replace(/[:：.!?]+\s*$/, '').trim();
-    if (!norm || norm.length > 60) return null;
-    for (const def of SECTION_DEFS) {
-        for (const label of def.labels) {
-            if (norm === label || norm === label + ':') return def;
-        }
-    }
-    return null;
-}
-
-/** Wrap detected sections in styled blocks with icons. Idempotent — bails if no sections found. */
-function decorateSections(html) {
-    if (!html) return html;
-    if (html.indexOf('description-block') !== -1) return html; // already decorated
-
-    const container = document.createElement('div');
-    container.innerHTML = html;
-
-    const children = Array.from(container.childNodes);
-    const groups = []; // [{ section, nodes }]
-    let current = { section: null, nodes: [] };
-
-    for (const node of children) {
-        if (node.nodeType !== 1) {
-            current.nodes.push(node);
-            continue;
-        }
-        // A paragraph that's only a heading-like text → split point
-        if (node.tagName === 'P') {
-            const textOnly = node.textContent.trim();
-            const def = matchSection(textOnly);
-            if (def && node.innerHTML.replace(/<[^>]+>/g, '').trim() === textOnly) {
-                if (current.nodes.length || current.section) groups.push(current);
-                current = { section: def, nodes: [] };
-                continue;
-            }
-        }
-        current.nodes.push(node);
-    }
-    if (current.nodes.length || current.section) groups.push(current);
-
-    // Only restructure if we actually found at least one section heading
-    const hasSections = groups.some(g => g.section);
-    if (!hasSections) return html;
-
-    const out = document.createElement('div');
-    for (const g of groups) {
-        if (!g.section) {
-            // Lead-in content with no heading
-            for (const n of g.nodes) out.appendChild(n);
-            continue;
-        }
-        const block = document.createElement('div');
-        block.className = `description-block description-block--${g.section.key}`;
-        const h = document.createElement('h5');
-        h.className = 'description-block-title';
-        h.innerHTML = `<i class="fas ${g.section.icon}" aria-hidden="true"></i><span></span>`;
-        h.querySelector('span').textContent = g.nodes.length === 0 ? '' : '';
-        // Restore the heading text from the section definition's canonical label (first one)
-        const label = g.section.labels[0].replace(/^\w/, c => c.toUpperCase());
-        h.querySelector('span').textContent = label;
-        block.appendChild(h);
-        const body = document.createElement('div');
-        body.className = 'description-block-body';
-        for (const n of g.nodes) body.appendChild(n);
-        block.appendChild(body);
-        out.appendChild(block);
-    }
-    return out.innerHTML;
-}
+// Description formatting (sanitize, structure, section blocks) lives in js/job-format.js,
+// shared with the /job/<id> pages.
 
 /** "5 minutes ago", "3 hours ago", "Yesterday", "Jan 4". */
 function relativeTime(dateInput) {

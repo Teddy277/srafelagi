@@ -1268,7 +1268,8 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
 .modal-dialog {
     background: var(--bg-primary);
     border-radius: var(--radius-2xl);
-    max-width: 760px;
+    /* Wide enough that the description column beside the 320px sidebar stays readable */
+    max-width: 1040px;
     width: 100%;
     margin: 0 auto;
     position: relative;
@@ -1494,6 +1495,42 @@ select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
     font-weight: 600;
     color: var(--text-primary);
 }
+
+/* Structure produced by js/job-format.js */
+.description-text .desc-heading {
+    font-family: var(--font-body);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.4;
+    margin: 1.5rem 0 0.6rem;
+}
+.description-text > .desc-heading:first-child,
+.description-block-body > .desc-heading:first-child { margin-top: 0; }
+.description-text .desc-facts {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.25rem;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+.description-text .desc-facts li {
+    display: grid;
+    grid-template-columns: minmax(110px, 34%) 1fr;
+    gap: 12px;
+    padding: 8px 14px;
+    margin: 0;
+    line-height: 1.5;
+}
+.description-text .desc-facts li + li { border-top: 1px solid var(--divider); }
+.description-text .desc-fact-label { color: var(--text-muted); font-size: 0.9rem; }
+.description-text .desc-fact-value { color: var(--text-primary); font-weight: 500; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+    .description-text .desc-facts li { grid-template-columns: 1fr; gap: 2px; }
+}
+.description-text .desc-empty { color: var(--text-muted); font-style: italic; }
+.description-text ul:not(.desc-facts) li::marker { color: var(--primary); }
 
 /* Similar jobs */
 .similar-jobs-loading {
