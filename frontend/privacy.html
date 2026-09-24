@@ -12,7 +12,9 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇪🇹</text></svg>">
     <link rel="stylesheet" href="css/style.css">
     <style>
-        .legal-page { max-width: 720px; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+        /* Top padding clears the fixed navbar (same offset as the post-job page). */
+        .legal-page { max-width: 720px; margin: 0 auto; padding: 110px 1.5rem 4rem; }
+        @media (max-width: 900px) { .legal-page { padding-top: 88px; } }
         .legal-page h1 { font-family: var(--font-heading); font-size: 1.75rem; margin-bottom: 0.5rem; }
         .legal-page .updated { color: var(--text-muted); font-size: 0.875rem; margin-bottom: 2rem; }
         .legal-page h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; color: var(--text-primary); }
