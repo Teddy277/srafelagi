@@ -20,7 +20,12 @@ from .base import BaseAIProvider
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+
+# Tried in order after the configured model when Google answers "model not found"
+# (models get retired: gemini-2.0-flash was, which silently broke AI rewriting).
+# "gemini-flash-latest" is Google's rolling alias, so the chain can't all go stale.
+FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.5-flash"]
 
 # Support comma-separated list of keys; fall back to single key
 _raw_keys = os.getenv("GEMINI_API_KEYS", "") or os.getenv("GEMINI_API_KEY", "")
@@ -148,16 +153,10 @@ class GeminiProvider(BaseAIProvider):
                 continue
 
             try:
-                response = client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                )
+                response = self.generate(client, prompt)
             except Exception as e:
-                err = str(e)
-                if "429" in err or "RESOURCE_EXHAUSTED" in err or "quota" in err.lower():
-                    logger.warning("Gemini key #%d quota exhausted, rotating to next key", self._key_index(key) + 1)
-                    self._mark_exhausted(key)
-                    continue  # try next key
+                if self.handle_key_error(key, e):
+                    continue  # quota / dead key: try next key
                 logger.error("Gemini call failed: %s: %s", type(e).__name__, e)
                 return out
 
@@ -204,18 +203,80 @@ class GeminiProvider(BaseAIProvider):
         )
         return out
 
+    # Model that last worked, shared by every provider instance in the process,
+    # so after one "not found" we stop retrying the retired model on each call.
+    _working_model: Optional[str] = None
+
+    def generate(self, client, contents, timeout: Optional[float] = None):
+        """generate_content with the configured model, falling back through
+        FALLBACK_MODELS when a model has been retired / doesn't exist."""
+        models = [GeminiProvider._working_model or self.model]
+        models += [m for m in [self.model] + FALLBACK_MODELS if m not in models]
+        last_error = None
+        for model in models:
+            try:
+                if timeout:
+                    import concurrent.futures as _cf
+                    ex = _cf.ThreadPoolExecutor(max_workers=1)
+                    try:
+                        response = ex.submit(
+                            client.models.generate_content, model=model, contents=contents
+                        ).result(timeout=timeout)
+                    finally:
+                        ex.shutdown(wait=False)
+                else:
+                    response = client.models.generate_content(model=model, contents=contents)
+            except Exception as e:
+                err = str(e)
+                if "NOT_FOUND" in err or "is not found" in err or "no longer available" in err:
+                    logger.warning("Gemini model %s unavailable, trying the next one", model)
+                    last_error = e
+                    continue
+                # "503 UNAVAILABLE: high demand" is per model and usually brief;
+                # another model almost always answers, which beats weaker fallbacks.
+                if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower() or "500 INTERNAL" in err:
+                    logger.warning("Gemini model %s busy (%s), trying the next one", model, err[:60])
+                    last_error = e
+                    continue
+                raise
+            if GeminiProvider._working_model != model:
+                if model != self.model:
+                    logger.warning("Gemini: using %s (configured model %s is unavailable)", model, self.model)
+                GeminiProvider._working_model = model
+            return response
+        raise last_error or RuntimeError("No Gemini model available")
+
+    def handle_key_error(self, key: str, error: Exception) -> bool:
+        """Sideline a key that can't serve requests. True = try the next key."""
+        err = str(error)
+        if "429" in err or "RESOURCE_EXHAUSTED" in err or "quota" in err.lower():
+            logger.warning("Gemini key #%d quota exhausted, rotating to next key", self._key_index(key) + 1)
+            self._mark_exhausted(key)
+            return True
+        if ("PERMISSION_DENIED" in err or "API_KEY_INVALID" in err or "leaked" in err
+                or "API key not valid" in err or "403" in err):
+            logger.error("Gemini key #%d rejected (%s); skipping it. Replace this key.",
+                         self._key_index(key) + 1, err[:120])
+            GeminiProvider._dead_keys.add(key)
+            return True
+        return False
+
+    # Keys Google rejected outright (leaked / revoked); never retried this process
+    _dead_keys: set = set()
+
     # ── internal helpers ─────────────────────────────────────────────────────
 
     def _active_keys(self) -> List[str]:
         """Return keys that are not currently quota-exhausted."""
         now = time.time()
         # Reset exhaustion after 24 hours (daily quota resets)
-        active = [k for k in self._keys if now - self._exhausted.get(k, 0) > 86400]
-        if not active and self._keys:
+        usable = [k for k in self._keys if k not in GeminiProvider._dead_keys]
+        active = [k for k in usable if now - self._exhausted.get(k, 0) > 86400]
+        if not active and usable:
             # All exhausted but some may have aged out — reset all and retry
             logger.info("All Gemini keys were exhausted; resetting exhaustion state.")
             self._exhausted.clear()
-            active = list(self._keys)
+            active = list(usable)
         return active
 
     def _mark_exhausted(self, key: str):

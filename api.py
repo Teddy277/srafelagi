@@ -1007,6 +1007,15 @@ from typing import List as _List
 ASSISTANT_SYSTEM_PROMPT = """You are Srafelagi AI, the official AI assistant of Srafelagi — Ethiopia's smart job board.
 You help job seekers in Ethiopia find the right jobs, improve their CVs, and prepare for interviews.
 
+LANGUAGE — most important rule:
+- Reply in the language of the user's LATEST message. If it is written in Amharic (Ethiopic script, e.g. "ስራ አለ?"), reply fully in natural, fluent Amharic. If it is in English, reply in English. If mixed, use the language most of the message is in.
+- When replying in Amharic, keep job titles, company names, emails, phone numbers and links exactly as they appear in the job list.
+
+CONVERSATION RULES:
+- The chat window has already welcomed the user, so do not open replies with hello, hi, ሰላም or any greeting; answer the question directly. Only if the user's message is itself just a greeting, greet back once, briefly.
+- Do not repeat what you already said earlier in the conversation.
+- Refer to jobs by their title and company. Never ask the user for a job ID and never show IDs; if they mention a job by name, find it in the job list below.
+
 IMPORTANT IDENTITY RULES — follow these strictly:
 - Your name is "Srafelagi AI". Never say you are Gemini, ChatGPT, Claude, Llama, Groq, or any other AI.
 - If anyone asks what AI you are or who made you, say: "I'm Srafelagi AI, built to help Ethiopians find jobs."
@@ -1031,7 +1040,7 @@ When the user shares their CV or asks about jobs:
 - Give honest advice about their chances and how to improve
 
 Personalization:
-- If the user's name is provided (from their signed-in account or their CV), greet them by their FIRST name and keep the tone personal.
+- If the user's name is provided (from their signed-in account or their CV), use their FIRST name naturally now and then. Greeting rules above still apply: greet only in your first reply.
 - When a CV is shared, read the candidate's name from it and refer to them by it.
 - If the user is already signed in, you know who they are — never ask for their name again.
 
@@ -1054,16 +1063,23 @@ def _extract_pdf_text(file_bytes: bytes) -> str:
 _selected_ai: dict = {"provider": "auto", "model": None}
 
 # Verified free OpenRouter models
+# (checked against openrouter.ai/api/v1/models, Sept 2026; most of the old list 404s).
+# Google's Gemma first: the free models that handle Amharic best.
 _OPENROUTER_FREE_MODELS = [
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "nvidia/nemotron-3-super-120b-a12b:free",
-    "nousresearch/hermes-3-llama-3.1-405b:free",
-    "openai/gpt-oss-120b:free",
     "google/gemma-4-31b-it:free",
-    "deepseek/deepseek-v4-flash:free",
     "google/gemma-4-26b-a4b-it:free",
-    "meta-llama/llama-3.2-3b-instruct:free",
+    "qwen/qwen3.8-27b:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "thinkingmachines/inkling:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
 ]
+
+# Some models return their private reasoning instead of an answer
+# ("We need to respond in Amharic…", "Okay, the user is asking…").
+_LEAKED_REASONING = re.compile(
+    r"^\s*(okay|ok|alright|so|hmm)?[,.]?\s*(we need to|we should|i need to|i should|let me|the user (is|has|asks|asked|wrote|wants))\b",
+    re.I,
+)
 
 
 def _try_groq(messages: list, system: str) -> Optional[str]:
@@ -1110,7 +1126,10 @@ def _try_openrouter(messages: list, system: str, model: Optional[str] = None) ->
                     timeout=25,
                 )
                 if resp.status_code == 200:
-                    content = resp.json()["choices"][0]["message"]["content"]
+                    content = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content")
+                    if content and _LEAKED_REASONING.match(content):
+                        logger.warning("OpenRouter model %s returned its reasoning, trying next...", or_model)
+                        continue
                     if content and content.strip():
                         logger.info("OpenRouter responded via %s", or_model)
                         return content.strip()
@@ -1160,11 +1179,8 @@ def _gemini_chat(messages: list, system: str = ASSISTANT_SYSTEM_PROMPT) -> str:
                 if not client:
                     continue
                 try:
-                    def _call(c=client, p=full_prompt, m=provider.model):
-                        return c.models.generate_content(model=m, contents=p)
-                    with _cf.ThreadPoolExecutor(max_workers=1) as ex:
-                        fut = ex.submit(_call)
-                        response = fut.result(timeout=8)
+                    # generate() falls back to a current model if the configured one was retired
+                    response = provider.generate(client, full_prompt, timeout=20)
                     text = GeminiProvider._extract_text(response)
                     if text:
                         return text
@@ -1172,10 +1188,8 @@ def _gemini_chat(messages: list, system: str = ASSISTANT_SYSTEM_PROMPT) -> str:
                     logger.warning("Gemini key timed out, skipping to Groq")
                     break
                 except Exception as e:
-                    err = str(e)
-                    if "429" in err or "RESOURCE_EXHAUSTED" in err or "quota" in err.lower():
-                        provider._mark_exhausted(key)
-                        continue
+                    if provider.handle_key_error(key, e):
+                        continue  # quota-exhausted or rejected key: try the next one
                     logger.warning("Gemini chat error: %s", e)
                     break
     except Exception as e:
@@ -1204,11 +1218,9 @@ def _jobs_to_context(jobs: list) -> str:
         location = j.get("location") or ""
         deadline = j.get("deadline") or ""
         desc = (j.get("description") or "")[:300]
-        jid = j.get("id")
         line = f"- [{title}]" + (f" at {company}" if company else "") + (f" | {location}" if location else "")
         if deadline:
             line += f" | Deadline: {deadline}"
-        line += f" | ID: {jid}"
         if desc:
             line += f"\n  {desc}"
         lines.append(line)
@@ -1227,11 +1239,140 @@ class ChatRequest(BaseModel):
     session_id: str = ""
 
 
-def _search_jobs_smart(message: str = "", cv_text: str = "", limit: int = 6) -> list:
+# Words that say nothing about *which* job: dropped before searching.
+# Searching the whole sentence ("do you have accountant jobs?") matched nothing,
+# because the DB search needs every word, so the assistant only saw "latest jobs".
+_SEARCH_STOPWORDS = set("""
+a an the and or but if of to in on at for from with by about as into is are was were be been am do does did
+have has had can could would should will shall may might must i me my mine we us our you your he she it they
+them their this that these those there here what which who whom whose where when why how any some all no not
+please pls plz thanks thank hi hello hey dear find search show give tell send get looking look want need like
+job jobs work works vacancy vacancies position positions opening openings role roles career careers hiring
+available open new latest recent more other another also just only very really one ones list lists apply
+ethiopia ethiopian addis ababa near around
+ስራ ሥራ ስራዎች ሥራዎች ስራ፣ የስራ የሥራ ክፍት ቦታ ቦታዎች ማስታወቂያ አለ አለህ አለሽ አሉ አሉ? አለ? ነው ናቸው ምን ምንድን
+እፈልጋለሁ ፈልግ ፈልጊ ፈልጉ ፈልጌ ፈልጊልኝ ፈልግልኝ እባክህ እባክሽ እባካችሁ ስጠኝ አሳየኝ አሳዪኝ ንገረኝ ንገሪኝ ላይ
+ውስጥ እና ወይም ለ በ ከ ያለ ያሉ ሰላም ጤና ይስጥልኝ አዲስ አበባ ኢትዮጵያ እኔ የኔ ለኔ ልሰራ መስራት ይቻላል
+ሰራተኛ ሠራተኛ ሰራተኞች ሠራተኞች ባለሙያ ባለሙያዎች ኦፊሰር
+""".split())
+
+
+def _search_keywords(text: str) -> list:
+    words = re.findall(r"[\wሀ-፿+#.-]+", (text or "").lower())
+    out = []
+    for w in words:
+        w = w.strip(".-")
+        if len(w) < 2 or w in _SEARCH_STOPWORDS or w.isdigit():
+            continue
+        # plural → singular for English titles ("accountants", "developers")
+        if re.fullmatch(r"[a-z]{5,}s", w) and not w.endswith("ss"):
+            w = w[:-1]
+        if w not in out:
+            out.append(w)
+    return out[:6]
+
+
+# Common Amharic job words → the English titles most listings use. Matched as
+# substrings, so attached prefixes still hit ("የሂሳብ" contains "ሂሳብ").
+_AMHARIC_JOB_TERMS = {
+    "ሂሳብ": ["accountant", "accounting"], "ሒሳብ": ["accountant", "accounting"],
+    "ኦዲት": ["auditor"], "ገንዘብ ያዥ": ["cashier"], "ካሸር": ["cashier"], "ካሼር": ["cashier"],
+    "ሽያጭ": ["sales"], "ማርኬቲንግ": ["marketing"], "ገበያ": ["marketing"],
+    "ሹፌር": ["driver"], "ሾፌር": ["driver"], "አሽከርካሪ": ["driver"],
+    "መምህር": ["teacher"], "አስተማሪ": ["teacher", "tutor"], "ሞግዚት": ["nanny"],
+    "ነርስ": ["nurse"], "ሀኪም": ["doctor"], "ሐኪም": ["doctor"], "ዶክተር": ["doctor"], "ፋርማ": ["pharmacist"],
+    "ኢንጂነር": ["engineer"], "መሀንዲስ": ["engineer"], "መሐንዲስ": ["engineer"], "አርክቴክት": ["architect"],
+    "ኤሌክትሪ": ["electrician"], "መካኒክ": ["mechanic"], "ቴክኒሽያን": ["technician"], "ቴክኒሺያን": ["technician"],
+    "ምሩቅ": ["fresh graduate", "junior"], "ምሩቃን": ["fresh graduate", "junior"], "ተመራቂ": ["fresh graduate", "junior"],
+    "ፀሐፊ": ["secretary"], "ጸሐፊ": ["secretary"], "ሪሴፕሽን": ["receptionist"], "እንግዳ ተቀባይ": ["receptionist"],
+    "ጥበቃ": ["security"], "ፅዳት": ["cleaner"], "ጽዳት": ["cleaner"], "ምግብ": ["cook", "chef"], "ሼፍ": ["chef"],
+    "ግራፊክ": ["graphic designer"], "ዲዛይን": ["designer"], "ፕሮግራመር": ["developer"], "ሶፍትዌር": ["software"],
+    "ባንክ": ["bank"], "ሎጂስቲክ": ["logistics"], "ስቶር": ["store keeper"], "መጋዘን": ["store keeper"],
+    "የሰው ሀብት": ["hr", "human resource"], "ሂውማን ሪሶርስ": ["hr", "human resource"], "ህግ": ["legal", "lawyer"],
+    "ሥራ አስኪያጅ": ["manager"], "ስራ አስኪያጅ": ["manager"], "ማኔጀር": ["manager"], "ሱፐርቫይዘር": ["supervisor"],
+}
+
+
+def _amharic_terms(message: str) -> list:
+    out = []
+    for am, en in _AMHARIC_JOB_TERMS.items():
+        if am in (message or ""):
+            out += [t for t in en if t not in out]
+    return out[:6]
+
+
+def _ai_search_terms(message: str) -> list:
+    """Amharic question with no direct match → ask Gemini for English/Amharic
+    job-title keywords (most listings are titled in English)."""
+    try:
+        from ai_providers.gemini import GeminiProvider
+        provider = GeminiProvider()
+        if not provider.is_available():
+            return []
+        prompt = ("Extract job-search keywords from this Ethiopian job seeker's message. "
+                  "Return 1-4 short job titles or fields, in English AND Amharic where useful, "
+                  "comma-separated, nothing else.\nMessage: " + message[:300])
+        for key in provider._active_keys():
+            client = provider._get_client(key)
+            if not client:
+                continue
+            try:
+                text = GeminiProvider._extract_text(provider.generate(client, prompt, timeout=8))
+                return [t.strip() for t in text.replace("\n", ",").split(",") if 1 < len(t.strip()) <= 40][:6]
+            except Exception as e:
+                if provider.handle_key_error(key, e):
+                    continue
+                return []
+    except Exception as e:
+        logger.warning("AI search-term extraction failed: %s", e)
+    return []
+
+
+def _search_by_terms(terms: list, limit: int) -> list:
+    """Phrase first, then each term; merged without duplicates, newest first."""
+    found, seen = [], set()
+    queries = ([" ".join(terms)] if len(terms) > 1 else []) + terms
+    for q in queries:
+        for j in db.get_jobs(limit=limit, search=q, sort="newest"):
+            if j.get("id") not in seen:
+                seen.add(j.get("id"))
+                found.append(j)
+        if len(found) >= limit:
+            break
+    return found[:limit]
+
+
+def _search_jobs_smart(message: str = "", cv_text: str = "", limit: int = 6, history: list = None) -> list:
     """Search jobs using multiple strategies, always returning results if any exist."""
-    # 1. Search by user message (skip short/generic messages)
-    if len(message.split()) >= 2:
-        jobs = db.get_jobs(limit=limit, search=message[:150], sort="newest")
+    # 0. A job number ("job 8277", "#8277")
+    m = re.search(r"(?:#|\bjob\s*(?:id|no\.?|number)?\s*:?\s*|ቁጥር\s*)(\d{2,7})\b", message or "", re.I)
+    if m:
+        job = db.get_job_by_id(int(m.group(1)))
+        if job:
+            return [job]
+
+    # 1. Keywords from the message; for follow-ups ("any more?", "ሌላ አለ?") reuse
+    #    the topic of the user's previous messages.
+    # Amharic first goes through Gemini: most titles are English ("Accountant"),
+    # and Amharic words carry attached prefixes ("የሂሳብ") that exact-word search misses.
+    if re.search(r"[ሀ-፿]", message or ""):
+        # Built-in dictionary first (instant, works even when Gemini is busy), then Gemini
+        for am_terms in (_amharic_terms(message), None):
+            am_terms = am_terms if am_terms is not None else _ai_search_terms(message)
+            if am_terms:
+                jobs = _search_by_terms(am_terms, limit)
+                if jobs:
+                    return jobs
+
+    terms = _search_keywords(message)
+    if not terms:
+        for h in reversed(history or []):
+            if h.get("role") == "user":
+                terms = _search_keywords(h.get("content", ""))
+                if terms:
+                    break
+    if terms:
+        jobs = _search_by_terms(terms, limit)
         if jobs:
             return jobs
 
@@ -1267,22 +1408,31 @@ async def assistant_chat(req: ChatRequest, authorization: str = Header(None)):
         raise HTTPException(status_code=400, detail="Message is required")
     uid = _optional_user_id(authorization)
 
-    jobs = _search_jobs_smart(message=req.message, cv_text=req.cv_text)
+    # The widget adds the new message to `history` before sending it, so drop
+    # that copy; otherwise the model sees every question twice.
+    history = [{"role": m.role, "content": m.content} for m in req.history]
+    if history and history[-1]["role"] == "user" and history[-1]["content"].strip() == req.message.strip():
+        history.pop()
+    history = history[-8:]
+
+    jobs = _search_jobs_smart(message=req.message, cv_text=req.cv_text, history=history)
     jobs_context = _jobs_to_context(jobs)
 
     # Build system prompt with user + jobs + CV context
     system = ASSISTANT_SYSTEM_PROMPT
     if req.user_name.strip():
-        system += f"\n\nThe signed-in user's name is {req.user_name.strip()[:80]}. Greet them by their first name and personalize your help."
+        # Telling the model to greet by name on every turn was the repeat-"hello" bug
+        system += (f"\n\nThe signed-in user's name is {req.user_name.strip()[:80]}."
+                   " You may use their first name, but do not greet them.")
     if req.cv_text:
         system += f"\n\nThe user's CV/profile:\n{req.cv_text[:3000]}"
     system += f"\n\n{jobs_context}"
 
-    # Build message history
-    messages = [{"role": m.role, "content": m.content} for m in req.history[-8:]]
-    messages.append({"role": "user", "content": req.message})
+    messages = history + [{"role": "user", "content": req.message}]
 
     reply = _gemini_chat(messages, system=system)
+    # The chat shows plain text; fallback models sometimes add **bold** / ## headings anyway
+    reply = re.sub(r"\*\*|__|^#{1,6}\s*", "", reply, flags=re.M)
 
     # Log the exchange for the admin Conversations view (best-effort)
     if req.session_id.strip():
@@ -1605,7 +1755,7 @@ async def admin_ai_providers(username: str = Depends(verify_token)):
     groq_keys   = len([k for k in os.getenv("GROQ_API_KEYS", os.getenv("GROQ_API_KEY", "")).split(",") if k.strip()])
     or_keys     = len([k for k in os.getenv("OPENROUTER_API_KEYS", os.getenv("OPENROUTER_API_KEY", "")).split(",") if k.strip()])
     providers = [
-        {"id": "gemini",     "name": "Gemini",  "model": os.getenv("GEMINI_MODEL", "gemini-2.0-flash"), "keys": gemini_keys},
+        {"id": "gemini",     "name": "Gemini",  "model": os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), "keys": gemini_keys},
         {"id": "groq",       "name": "Groq",    "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"), "keys": groq_keys},
     ] + [
         {"id": "openrouter", "name": "OpenRouter", "model": m, "keys": or_keys}

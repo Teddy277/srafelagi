@@ -32,7 +32,7 @@ services:
       - key: GEMINI_API_KEYS
         sync: false          # comma-separated keys
       - key: GEMINI_MODEL
-        value: gemini-2.0-flash
+        value: gemini-3.8-flash
 
       # ── Google AdSense (site shows no ads until ADSENSE_CLIENT is set) ──
       - key: ADSENSE_CLIENT

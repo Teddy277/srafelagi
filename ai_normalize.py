@@ -26,7 +26,7 @@ Environment Variables:
   GROQ_API_KEY=your_key
   GROQ_MODEL=llama-3.1-8b-instant
   GEMINI_API_KEY=your_key
-  GEMINI_MODEL=gemini-2.0-flash
+  GEMINI_MODEL=gemini-3.8-flash
 
 If all providers fail, original text is returned unchanged.
 """
