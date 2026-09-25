@@ -290,6 +290,23 @@ async def _keep_alive():
         await asyncio.sleep(interval)
 
 
+_db_ready = None  # asyncio.Event, created in startup() once the event loop exists
+
+
+async def _refresh_afriwork_after_startup():
+    """Backfill full descriptions for Afriwork jobs saved in the old header-only
+    format. Runs once per start, in the background, after the DB is ready;
+    idempotent, so it's a no-op once every row has been refreshed."""
+    import asyncio
+    await _db_ready.wait()
+    await asyncio.sleep(60)  # let startup traffic settle first
+    try:
+        from refresh_afriwork_descriptions import refresh_afriwork_descriptions
+        await refresh_afriwork_descriptions(db)
+    except Exception as e:
+        logger.error("Afriwork description refresh failed: %s", e)
+
+
 async def _init_db_with_retry():
     """Connect to the database without blocking startup.
 
@@ -306,6 +323,7 @@ async def _init_db_with_retry():
         try:
             await asyncio.to_thread(db.initialize)
             logger.info("Database ready")
+            _db_ready.set()
             return
         except Exception as e:
             logger.error("Database init failed (attempt %s, retrying in 15s): %s", attempt, e)
@@ -329,7 +347,10 @@ async def _schedule_chat_cleanup():
 @app.on_event("startup")
 async def startup():
     import asyncio
+    global _db_ready
+    _db_ready = asyncio.Event()
     asyncio.create_task(_init_db_with_retry())
+    asyncio.create_task(_refresh_afriwork_after_startup())
     asyncio.create_task(_schedule_daily_digest())
     asyncio.create_task(_schedule_expired_cleanup())
     asyncio.create_task(_schedule_chat_cleanup())
