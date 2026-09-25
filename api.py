@@ -1082,7 +1082,29 @@ _LEAKED_REASONING = re.compile(
 )
 
 
-def _try_groq(messages: list, system: str) -> Optional[str]:
+# Time budget for one chat answer across every provider, key and model.
+# Without it one answer could walk keys x models x fallbacks for minutes.
+_CHAT_BUDGET_SECONDS = 45
+
+
+def _time_left(deadline: Optional[float]) -> float:
+    return float("inf") if deadline is None else deadline - _time.monotonic()
+
+
+_chat_gemini_provider = None
+
+
+def _get_chat_gemini():
+    """One Gemini provider shared by all chat requests: API clients and the
+    dead / quota-exhausted key state are reused instead of rebuilt per message."""
+    global _chat_gemini_provider
+    if _chat_gemini_provider is None:
+        from ai_providers.gemini import GeminiProvider
+        _chat_gemini_provider = GeminiProvider()
+    return _chat_gemini_provider
+
+
+def _try_groq(messages: list, system: str, deadline: Optional[float] = None) -> Optional[str]:
     import requests as _req
     _raw_groq = os.getenv("GROQ_API_KEYS", os.getenv("GROQ_API_KEY", ""))
     groq_keys = [k.strip() for k in _raw_groq.split(",") if k.strip()]
@@ -1090,12 +1112,14 @@ def _try_groq(messages: list, system: str) -> Optional[str]:
     groq_messages = [{"role": "system", "content": system}]
     groq_messages += [{"role": m["role"], "content": m["content"]} for m in messages[-8:]]
     for groq_key in groq_keys:
+        if _time_left(deadline) < 5:
+            break
         try:
             resp = _req.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
                 json={"model": groq_model, "messages": groq_messages, "max_tokens": 1024, "temperature": 0.7},
-                timeout=20,
+                timeout=min(20, _time_left(deadline)),
             )
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"].strip()
@@ -1108,7 +1132,8 @@ def _try_groq(messages: list, system: str) -> Optional[str]:
     return None
 
 
-def _try_openrouter(messages: list, system: str, model: Optional[str] = None) -> Optional[str]:
+def _try_openrouter(messages: list, system: str, model: Optional[str] = None,
+                    deadline: Optional[float] = None) -> Optional[str]:
     import requests as _req
     _raw_or = os.getenv("OPENROUTER_API_KEYS", os.getenv("OPENROUTER_API_KEY", ""))
     or_keys = [k.strip() for k in _raw_or.split(",") if k.strip()]
@@ -1117,13 +1142,16 @@ def _try_openrouter(messages: list, system: str, model: Optional[str] = None) ->
     or_messages += [{"role": m["role"], "content": m["content"]} for m in messages[-8:]]
     for or_key in or_keys:
         for or_model in models_to_try:
+            if _time_left(deadline) < 5:
+                logger.warning("OpenRouter: chat time budget used up")
+                return None
             try:
                 resp = _req.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers={"Authorization": f"Bearer {or_key}", "Content-Type": "application/json",
                              "HTTP-Referer": "https://www.srafelagi.com", "X-Title": "Srafelagi AI"},
                     json={"model": or_model, "messages": or_messages, "max_tokens": 1024, "temperature": 0.7},
-                    timeout=25,
+                    timeout=min(25, _time_left(deadline)),
                 )
                 if resp.status_code == 200:
                     content = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content")
@@ -1144,28 +1172,34 @@ def _try_openrouter(messages: list, system: str, model: Optional[str] = None) ->
 
 
 def _gemini_chat(messages: list, system: str = ASSISTANT_SYSTEM_PROMPT) -> str:
-    """Route chat to the admin-selected AI provider, or auto-fallback chain."""
+    """Route chat to the admin-selected AI provider, or auto-fallback chain.
+
+    Blocking (network calls for up to _CHAT_BUDGET_SECONDS): call it from a
+    worker thread (asyncio.to_thread) in async routes, never on the event loop,
+    or every other request to the site waits behind it.
+    """
     global _selected_ai
+    deadline = _time.monotonic() + _CHAT_BUDGET_SECONDS
     provider = _selected_ai.get("provider", "auto")
     sel_model = _selected_ai.get("model")
 
     # ── Direct routing when admin has selected a specific provider ──
     if provider == "groq":
-        result = _try_groq(messages, system)
+        result = _try_groq(messages, system, deadline=deadline)
         return result or "I'm temporarily unavailable. Please try again in a moment."
 
     if provider == "openrouter":
-        result = _try_openrouter(messages, system, model=sel_model)
+        result = _try_openrouter(messages, system, model=sel_model, deadline=deadline)
         return result or "I'm temporarily unavailable. Please try again in a moment."
 
     if provider == "gemini":
         pass  # falls through to Gemini block below
 
-    # ── Try Gemini (8s timeout per key) ─────────────────────
+    # ── Try Gemini ──────────────────────────────────────────
     import concurrent.futures as _cf
     try:
         from ai_providers.gemini import GeminiProvider
-        provider = GeminiProvider()
+        provider = _get_chat_gemini()
         if provider.is_available():
             history_text = ""
             for msg in messages[:-1]:
@@ -1175,12 +1209,15 @@ def _gemini_chat(messages: list, system: str = ASSISTANT_SYSTEM_PROMPT) -> str:
             full_prompt = f"{system}\n\n{history_text}User: {last}\n\nAssistant:"
 
             for key in provider._active_keys():
+                if _time_left(deadline) < 8:
+                    break  # leave time for the fallbacks below
                 client = provider._get_client(key)
                 if not client:
                     continue
                 try:
                     # generate() falls back to a current model if the configured one was retired
-                    response = provider.generate(client, full_prompt, timeout=20)
+                    response = provider.generate(client, full_prompt, timeout=20,
+                                                 deadline=deadline - 5)
                     text = GeminiProvider._extract_text(response)
                     if text:
                         return text
@@ -1196,12 +1233,12 @@ def _gemini_chat(messages: list, system: str = ASSISTANT_SYSTEM_PROMPT) -> str:
         logger.warning("Gemini chat setup failed: %s", e)
 
     # ── Fallback 1: Groq ────────────────────────────────────
-    result = _try_groq(messages, system)
+    result = _try_groq(messages, system, deadline=deadline)
     if result:
         return result
 
     # ── Fallback 2: OpenRouter ──────────────────────────────
-    result = _try_openrouter(messages, system)
+    result = _try_openrouter(messages, system, deadline=deadline)
     if result:
         return result
 
@@ -1306,18 +1343,22 @@ def _ai_search_terms(message: str) -> list:
     job-title keywords (most listings are titled in English)."""
     try:
         from ai_providers.gemini import GeminiProvider
-        provider = GeminiProvider()
+        provider = _get_chat_gemini()
         if not provider.is_available():
             return []
         prompt = ("Extract job-search keywords from this Ethiopian job seeker's message. "
                   "Return 1-4 short job titles or fields, in English AND Amharic where useful, "
                   "comma-separated, nothing else.\nMessage: " + message[:300])
+        deadline = _time.monotonic() + 12  # a nicety: never hold up the answer for long
         for key in provider._active_keys():
+            if _time_left(deadline) < 2:
+                return []
             client = provider._get_client(key)
             if not client:
                 continue
             try:
-                text = GeminiProvider._extract_text(provider.generate(client, prompt, timeout=8))
+                text = GeminiProvider._extract_text(
+                    provider.generate(client, prompt, timeout=8, deadline=deadline))
                 return [t.strip() for t in text.replace("\n", ",").split(",") if 1 < len(t.strip()) <= 40][:6]
             except Exception as e:
                 if provider.handle_key_error(key, e):
@@ -1342,8 +1383,18 @@ def _search_by_terms(terms: list, limit: int) -> list:
     return found[:limit]
 
 
-def _search_jobs_smart(message: str = "", cv_text: str = "", limit: int = 6, history: list = None) -> list:
-    """Search jobs using multiple strategies, always returning results if any exist."""
+def _needs_ai_search_terms(message: str) -> bool:
+    """Amharic message that the built-in dictionary can't map to job titles."""
+    return bool(re.search("[ሀ-፿]", message or "")) and not _amharic_terms(message)
+
+
+def _search_jobs_smart(message: str = "", cv_text: str = "", limit: int = 6, history: list = None,
+                       ai_terms: Optional[list] = None) -> list:
+    """Search jobs using multiple strategies, always returning results if any exist.
+
+    ai_terms: Gemini-extracted keywords for Amharic messages, computed by the
+    caller off the event loop (see _needs_ai_search_terms); this function only
+    queries the database, so it's quick enough to run on the event loop."""
     # 0. A job number ("job 8277", "#8277")
     m = re.search(r"(?:#|\bjob\s*(?:id|no\.?|number)?\s*:?\s*|ቁጥር\s*)(\d{2,7})\b", message or "", re.I)
     if m:
@@ -1356,9 +1407,8 @@ def _search_jobs_smart(message: str = "", cv_text: str = "", limit: int = 6, his
     # Amharic first goes through Gemini: most titles are English ("Accountant"),
     # and Amharic words carry attached prefixes ("የሂሳብ") that exact-word search misses.
     if re.search(r"[ሀ-፿]", message or ""):
-        # Built-in dictionary first (instant, works even when Gemini is busy), then Gemini
-        for am_terms in (_amharic_terms(message), None):
-            am_terms = am_terms if am_terms is not None else _ai_search_terms(message)
+        # Built-in dictionary first (instant, works even when Gemini is busy), then Gemini's
+        for am_terms in (_amharic_terms(message), ai_terms or []):
             if am_terms:
                 jobs = _search_by_terms(am_terms, limit)
                 if jobs:
@@ -1415,7 +1465,13 @@ async def assistant_chat(req: ChatRequest, authorization: str = Header(None)):
         history.pop()
     history = history[-8:]
 
-    jobs = _search_jobs_smart(message=req.message, cv_text=req.cv_text, history=history)
+    # AI calls run in a worker thread: done on the event loop, one slow answer
+    # froze the whole site for every visitor until it finished.
+    import asyncio
+    ai_terms = None
+    if _needs_ai_search_terms(req.message):
+        ai_terms = await asyncio.to_thread(_ai_search_terms, req.message)
+    jobs = _search_jobs_smart(message=req.message, cv_text=req.cv_text, history=history, ai_terms=ai_terms)
     jobs_context = _jobs_to_context(jobs)
 
     # Build system prompt with user + jobs + CV context
@@ -1430,7 +1486,7 @@ async def assistant_chat(req: ChatRequest, authorization: str = Header(None)):
 
     messages = history + [{"role": "user", "content": req.message}]
 
-    reply = _gemini_chat(messages, system=system)
+    reply = await asyncio.to_thread(_gemini_chat, messages, system=system)
     # The chat shows plain text; fallback models sometimes add **bold** / ## headings anyway
     reply = re.sub(r"\*\*|__|^#{1,6}\s*", "", reply, flags=re.M)
 
@@ -1484,7 +1540,9 @@ CV text:
 
 Reply in plain text, structured clearly."""
 
-    profile_summary = _gemini_chat(
+    import asyncio  # AI calls block for seconds: keep them off the event loop
+    profile_summary = await asyncio.to_thread(
+        _gemini_chat,
         [{"role": "user", "content": profile_prompt}],
         system="You are a professional CV analyst. Be concise and accurate."
     )
@@ -1503,7 +1561,8 @@ Candidate profile:
 
 Give a warm, encouraging response with clear job recommendations."""
 
-    match_reply = _gemini_chat(
+    match_reply = await asyncio.to_thread(
+        _gemini_chat,
         [{"role": "user", "content": match_prompt}],
         system=ASSISTANT_SYSTEM_PROMPT
     )
@@ -1764,8 +1823,10 @@ async def admin_ai_providers(username: str = Depends(verify_token)):
     return {"providers": providers, "selected": _selected_ai}
 
 @app.post("/api/admin/ai-providers/test")
-async def admin_test_ai_provider(req: AITestRequest, username: str = Depends(verify_token)):
-    import time, concurrent.futures as _cf
+def admin_test_ai_provider(req: AITestRequest, username: str = Depends(verify_token)):
+    # Plain `def`: FastAPI runs it in a worker thread, so a slow provider can't
+    # freeze the site while an admin tests it.
+    import time
     import requests as _req
     test_system = "You are a test assistant. Reply with exactly the word: OK"
     test_msgs   = [{"role": "user", "content": "Reply with exactly the word: OK"}]
@@ -1774,18 +1835,28 @@ async def admin_test_ai_provider(req: AITestRequest, username: str = Depends(ver
     try:
         if req.provider == "gemini":
             from ai_providers.gemini import GeminiProvider
-            prov = GeminiProvider()
+            prov = _get_chat_gemini()
             keys = prov._active_keys() if prov.is_available() else []
             if not keys:
-                return {"status": "error", "message": "All Gemini keys are quota-exhausted"}
-            client = prov._get_client(keys[0])
+                return {"status": "error", "message": "No usable Gemini key (all rejected or quota-exhausted)"}
             prompt = f"{test_system}\n\nUser: Reply with exactly the word: OK\n\nAssistant:"
-            def _call():
-                return client.models.generate_content(model=prov.model, contents=prompt)
-            with _cf.ThreadPoolExecutor(max_workers=1) as ex:
-                response = ex.submit(_call).result(timeout=10)
-            text = GeminiProvider._extract_text(response) or ""
-            return {"status": "ok", "response": text[:60], "elapsed": round(time.time()-start, 2)}
+            last_err = None
+            for key in keys:  # same key + model fallback the chat uses
+                client = prov._get_client(key)
+                if not client:
+                    continue
+                try:
+                    response = prov.generate(client, prompt, timeout=15, deadline=_time.monotonic() + 30)
+                except Exception as e:
+                    last_err = e
+                    if prov.handle_key_error(key, e):
+                        continue
+                    break
+                text = GeminiProvider._extract_text(response) or ""
+                model = GeminiProvider._working_model or prov.model
+                return {"status": "ok", "response": f"{text[:50]} (model: {model})",
+                        "elapsed": round(time.time()-start, 2)}
+            return {"status": "error", "message": str(last_err)[:200] if last_err else "No Gemini client"}
 
         if req.provider == "groq":
             _raw = os.getenv("GROQ_API_KEYS", os.getenv("GROQ_API_KEY", ""))
@@ -1825,7 +1896,7 @@ async def admin_test_ai_provider(req: AITestRequest, username: str = Depends(ver
                 return {"status": "ok", "response": resp.json()["choices"][0]["message"]["content"][:60], "elapsed": elapsed}
             return {"status": "error", "message": f"HTTP {resp.status_code}: {resp.text[:150]}"}
 
-    except _cf.TimeoutError:
+    except TimeoutError:  # concurrent.futures.TimeoutError is this same class on 3.11+
         return {"status": "timeout", "message": "Request timed out"}
     except Exception as e:
         return {"status": "error", "message": str(e)[:120]}

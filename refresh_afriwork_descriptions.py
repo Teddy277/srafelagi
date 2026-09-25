@@ -25,13 +25,14 @@ from datetime import date
 
 logger = logging.getLogger(__name__)
 
-# Rows still in the old format: the header block + "=====" separator, or too short
-# to hold a real description.
+# Rows still in the old format: the header block + "=====" separator. Short
+# descriptions are not matched: many employers really do write one-line ads, and
+# re-scraping all of those on every server restart only added load.
 _NEEDS_REFRESH_SQL = """
     SELECT id, source_url, description, deadline_text
     FROM jobs
-    WHERE source_url LIKE '%%afriworket.com/jobs/%%'
-      AND (description IS NULL OR description LIKE '%%====================%%' OR length(description) < 400)
+    WHERE source_url LIKE '%afriworket.com/jobs/%'
+      AND (description IS NULL OR description LIKE '%====================%')
     ORDER BY id DESC
 """
 

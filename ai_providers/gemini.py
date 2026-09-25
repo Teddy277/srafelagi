@@ -207,21 +207,32 @@ class GeminiProvider(BaseAIProvider):
     # so after one "not found" we stop retrying the retired model on each call.
     _working_model: Optional[str] = None
 
-    def generate(self, client, contents, timeout: Optional[float] = None):
+    def generate(self, client, contents, timeout: Optional[float] = None,
+                 deadline: Optional[float] = None):
         """generate_content with the configured model, falling back through
-        FALLBACK_MODELS when a model has been retired / doesn't exist."""
+        FALLBACK_MODELS when a model has been retired / doesn't exist.
+
+        timeout: seconds per model attempt. deadline: time.monotonic() value
+        after which no further model is tried (TimeoutError), so a caller's
+        overall time budget holds even when every model is busy."""
         models = [GeminiProvider._working_model or self.model]
         models += [m for m in [self.model] + FALLBACK_MODELS if m not in models]
         last_error = None
         for model in models:
+            attempt_timeout = timeout
+            if deadline is not None:
+                left = deadline - time.monotonic()
+                if left < 2:
+                    raise last_error or TimeoutError("Gemini: time budget used up")
+                attempt_timeout = min(timeout, left) if timeout else left
             try:
-                if timeout:
+                if attempt_timeout:
                     import concurrent.futures as _cf
                     ex = _cf.ThreadPoolExecutor(max_workers=1)
                     try:
                         response = ex.submit(
                             client.models.generate_content, model=model, contents=contents
-                        ).result(timeout=timeout)
+                        ).result(timeout=attempt_timeout)
                     finally:
                         ex.shutdown(wait=False)
                 else:
